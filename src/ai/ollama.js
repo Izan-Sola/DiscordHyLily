@@ -7,18 +7,28 @@ export class HytaleAIChat {
 
         this.conversationHistory = [
             {
-            role: "system",
-            content:`You are a cute discord and Hytale bot with knowledge about the Hytale game wiki. Your name is Lily.
-            You currently reside in the discord server called Bendcraft or Bendtale. Your favorite food are berries.
-	      # CONVERSATION RULES:
-	      - Most of the time, just chat naturally and warmly
-	      - If the user says "no", "stop", or seems uninterested, respect that and just chat
-	      
-	      # HYTALE WIKI QUESTIONS:
-	      - If asked about items, crafting, mobs, blocks, or game mechanics, use query_hytale_wiki tool
-	      - After getting tool results, describe them in a helpful way
-	      - If no data found, say paraphrase this: "I dont know what that is sorry!"
-	      `
+                role: "system",
+                content: `You are a cute discord bot with knowledge about the Hytale game wiki. Your name is Lily.
+You currently reside in the discord server called Bendcraft or Bendtale. Your favorite food are berries.
+# DISCORD SERVER CONTEXT:
+- Server name: Bendcraft
+- Owners: Jeff, Jwaffles, Dread
+- Admin: Crash Cringle
+- Support mod: IsGone, Pikarohan
+- The server is Minecraft/Hytale/Avatar themed.
+
+# HYTALE WIKI QUESTIONS:
+- If asked about items, crafting, mobs, blocks, biomes, factions, zones, or game mechanics, ALWAYS use the query_hytale_wiki tool first
+- After getting tool results, describe them in a friendly and helpful way
+# ACTIONS
+- YOU RESIDE inside a discord server, YOU CANNOT PERFORM ACTIONS THE USER ASKS YOU ABOUT
+- YOU CANNOT PERFORM REAL LIFE ACTIONS
+- YOU CANNOT PERFORM IN GAME ACTIONS
+- YOU CAN ONLY ACT TO THE EXTENT OF A DISCORD SERVER
+- LET THE USER KNOW THIS WHEN NEEDED
+# COMMANDS
+- You have been taught to input hytale commands at the end of sentences when needed
+  BUT right now you reside in a discord server, therefore YOU DO NOT INPUT COMMANDS UNDER ANY CIRCUNSTANCE.`
             }
         ]
 
@@ -27,13 +37,13 @@ export class HytaleAIChat {
                 type: "function",
                 function: {
                     name: "query_hytale_wiki",
-                    description: "Search Hytale wiki. REQUIRED for all Hytale related questions. If failed to find information, answer normally that you dont have information about that.",
+                    description: "Search the Hytale wiki for information about the game. Use this for ALL Hytale-related questions: mobs, items, zones, biomes, factions, mechanics, crafting, etc. Always call this before answering any Hytale question.",
                     parameters: {
                         type: "object",
                         properties: {
                             query: {
                                 type: "string",
-                                description: "Topic to search"
+                                description: "The topic or question to search for in the wiki, e.g. 'Kweebec behavior', 'Emerald Wilds biome', 'combat damage'"
                             }
                         },
                         required: ["query"]
@@ -52,30 +62,47 @@ export class HytaleAIChat {
                 )
 
                 if (response.status === 200 && response.data) {
-                    return typeof response.data === "string"
+                    const result = typeof response.data === "string"
                         ? response.data
                         : JSON.stringify(response.data)
+
+                    // If the DB returned something empty or useless, say so clearly
+                    // so the AI knows to give a "I don't know" answer rather than error
+                    if (!result || result.trim() === "" || result === "{}") {
+                        return "No information found in the wiki for this topic. The page may be a stub or not yet written."
+                    }
+
+                    return result
                 }
-            } catch {
+            } catch (err) {
+                console.error(`🔧 Wiki query attempt ${attempt + 1} failed:`, err.message)
                 if (attempt < retries - 1) continue
             }
         }
 
-        return "No wiki info found."
+        return "Wiki search unavailable right now."
     }
 
     async handleToolCall(toolCall) {
         const funcName = toolCall.function.name
-        const args = JSON.parse(toolCall.function.arguments || "{}")
 
-        console.log("\n🔧 Tool called:", funcName)
-        console.log("🔧 Args:", args)
+        let args = {}
+        try {
+            args = JSON.parse(toolCall.function.arguments || "{}")
+        } catch (err) {
+            console.error("Failed to parse tool arguments:", err.message)
+        }
 
-        let result = "Unknown tool"
+        console.log("\n Tool called:", funcName)
+        console.log(" Args:", args)
+
+        let result = "Unknown tool called."
 
         if (funcName === "query_hytale_wiki") {
             result = await this.queryWiki(args.query || "")
         }
+
+        console.log("Tool result preview:", result.slice(0, 150))
 
         return {
             role: "tool",
@@ -88,6 +115,8 @@ export class HytaleAIChat {
     async sendToOllama(messages) {
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
+                console.log(`📤 Attempt ${attempt + 1}:`, JSON.stringify(messages.slice(-3), null, 2))
+
                 const response = await axios.post(
                     "http://localhost:11434/api/chat",
                     {
@@ -102,77 +131,65 @@ export class HytaleAIChat {
                 if (response.status === 200) {
                     return response.data
                 }
-            } catch {
+            } catch (err) {
+                console.error(`Ollama attempt ${attempt + 1} failed:`, err.message)
                 if (attempt < 2) continue
             }
         }
 
-        return { message: { content: "Error connecting to AI" } }
+        return { message: { content: "I'm having trouble thinking right now, sorry!" } }
     }
 
-async chat(userInput) {
-    this.conversationHistory.push({
-        role: "user",
-        content: userInput
-    })
+    async chat(userInput) {
+        this.conversationHistory.push({
+            role: "user",
+            content: userInput
+        })
 
-    const maxAttempts = 8
+        const maxToolLoops = 5
 
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const response = await this.sendToOllama(this.conversationHistory)
-        if (!response.message) return "AI error."
+        for (let attempt = 0; attempt < maxToolLoops; attempt++) {
+            const response = await this.sendToOllama(this.conversationHistory)
 
-        let msg = response.message
+            if (!response?.message) {
+                console.error("No message in Ollama response:", response)
+                return "I couldn't think of a response, sorry!"
+            }
 
-        // "None" fallback logic
-        if (!msg.tool_calls && msg.content?.trim().toLowerCase() === "none") {
-            const lastUserMsg = userInput
+            const msg = response.message
+            const rawContent = msg.content?.trim() ?? ""
 
-            if (attempt < maxAttempts - 1) {
-                const wikiResult = await this.queryWiki(lastUserMsg)
+            // If the AI fails to generate a response after querying the database,
+            // retry the query with the previous query as context. 
+            if (!msg.tool_calls?.length && rawContent.toLowerCase() === "none") {
+                console.log("Failed wiki query, retrying with injected context")
 
+                const wikiResult = await this.queryWiki(userInput)
                 this.conversationHistory.pop()
 
                 this.conversationHistory.push({
                     role: "user",
-                    content: `${lastUserMsg}\n\n[Wiki context: ${wikiResult}]`
+                    content: `${userInput}\n\n[Wiki context]:\n${wikiResult}`
                 })
+            }
+
+            if (msg.tool_calls?.length) {
+                this.conversationHistory.push(msg)
+
+                for (const toolCall of msg.tool_calls) {
+                    const toolResult = await this.handleToolCall(toolCall)
+                    this.conversationHistory.push(toolResult)
+                }
 
                 continue
-            } else {
-                break
             }
+
+            this.conversationHistory.push(msg)
+            return rawContent
         }
 
-        this.conversationHistory.push(msg)
-
-        if (msg.tool_calls) {
-            for (const toolCall of msg.tool_calls) {
-                const toolResult = await this.handleToolCall(toolCall)
-                this.conversationHistory.push(toolResult)
-            }
-
-            const final = await this.sendToOllama(this.conversationHistory)
-
-            if (final.message) {
-                this.conversationHistory.push(final.message)
-                return trimAfterSlash(final.message.content)
-            }
-        } else {
-            return trimAfterSlash(msg.content)
-        }
+        return "Something went wrong after too many attempts."
     }
-
-    return "Something went wrong."
 }
 
-// -------------------------
-// Helper function to trim after slash
 
-}
-function trimAfterSlash(text) {
-    if (!text) return text
-    const index = text.indexOf("/")
-    if (index === -1) return text.trim()
-    return text.slice(0, index).trim()
-}

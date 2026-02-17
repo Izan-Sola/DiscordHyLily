@@ -24,6 +24,6 @@ export async function execute(interaction) {
     await interaction.editReply(
         username + ": " + message +
         "\n ------- \n" +
-        reply
+        reply.replace(/\/\w+.*$/s, "").trim()
     )
 }
