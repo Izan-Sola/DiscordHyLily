@@ -98,7 +98,7 @@ export async function createBot() {
 
         try {
             const reply = await ai.chat(formattedMessage)
-            await message.reply(reply)
+            await message.reply(reply.replace(/\/\w+.*$/s, "").trim())
         } catch (err) {
             console.error("Ping handler error:", err)
             await message.reply("I'm having trouble thinking right now, sorry!")
