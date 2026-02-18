@@ -14,13 +14,13 @@ export class HytaleAIChat {
                 - Your name is Lily. You chat casually, and adapt your tone and personality to the conversation.
 
                 # HYTALE WIKI QUESTIONS:
-                - If asked about items, crafting, mobs, blocks, biomes, factions, zones, or game mechanics, ALWAYS use the query_hytale_wiki tool first
+                - If asked about Hytale items, crafting, mobs, blocks, biomes, factions, zones, or game mechanics, ALWAYS use the query_hytale_wiki tool first
                 - After getting tool results, describe them in a helpful, comprehensive and extensive way.
 
-                # CONVERSATION HISTORY
-                //format: "user": "message"
-                
-                
+                # CONVERSATION FORMAT:
+                - Messages will appear as: Username: message
+                - Replies appear as: Username (replying to OtherUser who said "quote"): message
+                - Mentions appear as: Username (mentioning OtherUser): message`.trim();         
             }
         ]
 
@@ -67,7 +67,7 @@ export class HytaleAIChat {
                     return result
                 }
             } catch (err) {
-                console.error(`🔧 Wiki query attempt ${attempt + 1} failed:`, err.message)
+                console.error(`Wiki query attempt ${attempt + 1} failed:`, err.message)
                 if (attempt < retries - 1) continue
             }
         }
