@@ -10,7 +10,7 @@ Discord bot to talk with Lily!
   - Add chat history to system prompt, tell her in context which user is talking to her, who is the user talking about, etc... Let her clearly know
     Who is talking to her, who is the user replying or talking about.
 
-
+  
 # HyLilty DISCORD Bot version data overview:
 
 ## Query Hytale Wiki Toolcall:
