@@ -11,7 +11,7 @@ Discord bot to talk with Lily!
     Who is talking to her, who is the user replying or talking about.
 
   
-# HyLilty DISCORD Bot version data overview:
+# HyLilty DISCORD Bot version last trained data overview:
 
 ## Query Hytale Wiki Toolcall:
 
