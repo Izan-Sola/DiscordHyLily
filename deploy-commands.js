@@ -18,7 +18,7 @@ for (const file of commandFiles) {
 
 const rest = new REST({ version: "10" }).setToken(config.token)
 
-// ⚡ Register global commands
+// Register global commands
 await rest.put(
     Routes.applicationCommands(config.clientId),
     { body: commands }

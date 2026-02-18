@@ -1,4 +1,4 @@
-import { Client, Collection, GatewayIntentBits, Partials } from "discord.js"
+import { Client, Collection, GatewayIntentBits } from "discord.js"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
@@ -14,8 +14,8 @@ export async function createBot() {
     const client = new Client({
         intents: [
             GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,     
-            GatewayIntentBits.MessageContent,     
+            GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.MessageContent,
         ]
     })
 
@@ -29,7 +29,6 @@ export async function createBot() {
         client.commands.set(command.data.name, command)
     }
 
-    // Slash commands
     client.on("interactionCreate", async interaction => {
         if (!interaction.isChatInputCommand()) return
         const command = client.commands.get(interaction.commandName)
@@ -42,16 +41,15 @@ export async function createBot() {
         }
     })
 
-    // Ping/mention handler
     client.on("messageCreate", async message => {
-        // Ignore bots and messages that don't ping Lily
         if (message.author.bot) return
         if (!message.mentions.has(client.user)) return
 
-        // Strip the mention out of the message to get the actual text
+        const authorName = message.member?.displayName || message.author.username
+
         const userInput = message.content
             .replace(`<@${client.user.id}>`, "")
-            .replace(`<@!${client.user.id}>`)
+            .replace(`<@!${client.user.id}>`, "")
             .trim()
 
         if (!userInput) {
@@ -59,13 +57,48 @@ export async function createBot() {
             return
         }
 
-        // Show typing indicator while Lily thinks
+        let formattedMessage = ""
+
+        // Reply handling for messages that directly reply to another message
+        if (message.reference?.messageId) {
+            try {
+                const referenced = await message.channel.messages.fetch(message.reference.messageId)
+
+                if (referenced) {
+                    const repliedUser =
+                        referenced.member?.displayName || referenced.author.username
+
+                    const quoted = referenced.content
+                        ?.replace(/\n/g, " ")
+                        .slice(0, 120)
+
+                    formattedMessage =
+                        `${authorName} (replying to ${repliedUser} who said "${quoted}"):\n${userInput}`
+                }
+            } catch {}
+        }
+
+        // Mention handling (excluding Lily herself)
+        if (!formattedMessage && message.mentions.users.size > 1) {
+            const mentionedUsers = message.mentions.users
+                .filter(u => u.id !== client.user.id)
+                .map(u => message.guild.members.cache.get(u.id)?.displayName || u.username)
+
+            if (mentionedUsers.length > 0) {
+                formattedMessage =
+                    `${authorName} (mentioning ${mentionedUsers.join(", ")}):\n${userInput}`
+            }
+        }
+
+        if (!formattedMessage) {
+            formattedMessage = `${authorName}: ${userInput}`
+        }
+
         await message.channel.sendTyping()
 
         try {
-            const reply = await ai.chat(userInput)
-            const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
-            await message.reply(cleanReply)
+            const reply = await ai.chat(formattedMessage)
+            await message.reply(reply)
         } catch (err) {
             console.error("Ping handler error:", err)
             await message.reply("I'm having trouble thinking right now, sorry!")
