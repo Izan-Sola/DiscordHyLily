@@ -7,6 +7,8 @@ Discord bot to talk with Lily!
   - Add the new tool calls
   - Avoid error replies or "None" replies at all costs, if querying fails, query the other database, and if it also fails answer normally, for edge cases.
   - If no info is found when querying the persistent knowledge database, consider if adding the info she was asked about, and then reply normally
+  - Add chat history to system prompt, tell her in context which user is talking to her, who is the user talking about, etc... Let her clearly know
+    Who is talking to her, who is the user replying or talking about.
 
   
 # HyLilty DISCORD Bot version last trained data overview:
@@ -15,22 +17,14 @@ Discord bot to talk with Lily!
 
     - 209 Samples
 
-Results: Seems to be pretty consistent overall, still have to test more thoroughly.
-    
 ## Query Persistent Knowledge Database Toolcall:
 
-    - 190 Samples
-
-Results: to be tested
+    - 91 Samples
 
 ## Add to Persistent Knowledge Database Toolcall:
 
-    - 232
-
-Results: to be tested
+    - 112 Samples
 
 ## Conversational Samples (Including negative examples):
 
     - 464 Samples
-
-Results: Very good and consistent overall.

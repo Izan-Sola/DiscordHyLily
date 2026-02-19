@@ -43,7 +43,12 @@ export async function createBot() {
 
     client.on("messageCreate", async message => {
         if (message.author.bot) return
-        if (!message.mentions.has(client.user)) return
+
+        const isMentioned = message.mentions.has(client.user)
+        const isReplyToBot = message.reference?.messageId
+            ? (await message.channel.messages.fetch(message.reference.messageId).catch(() => null))?.author?.id === client.user.id
+            : false
+
 
         const authorName = message.member?.displayName || message.author.username
 
@@ -52,6 +57,10 @@ export async function createBot() {
             .replace(`<@!${client.user.id}>`, "")
             .trim()
 
+        if (!isMentioned && !isReplyToBot)  {
+            ai.observe(`${authorName} said ${userInput}`)
+            return
+        }
         if (!userInput) {
             await message.reply("Yes? 🍓")
             return
@@ -59,40 +68,33 @@ export async function createBot() {
 
         let formattedMessage = ""
 
-        // Reply handling for messages that directly reply to another message
+        // Reply to another message
         if (message.reference?.messageId) {
             try {
                 const referenced = await message.channel.messages.fetch(message.reference.messageId)
-
                 if (referenced) {
-                    const repliedUser =
-                        referenced.member?.displayName || referenced.author.username
-
-                    const quoted = referenced.content
-                        ?.replace(/\n/g, " ")
-                        .slice(0, 120)
-
-                    formattedMessage =
-                        `${authorName} (replying to ${repliedUser} who said "${quoted}"):\n${userInput}`
+                    const repliedUser = referenced.member?.displayName || referenced.author.username
+                    const quoted = referenced.content?.replace(/\n/g, " ").slice(0, 120)
+                    formattedMessage = `${authorName} says to you, replying to ${repliedUser} who said "${quoted}": ${userInput}`
                 }
             } catch {}
         }
 
-        // Mention handling (excluding Lily herself)
+        // Mentioning another user
         if (!formattedMessage && message.mentions.users.size > 1) {
             const mentionedUsers = message.mentions.users
                 .filter(u => u.id !== client.user.id)
                 .map(u => message.guild.members.cache.get(u.id)?.displayName || u.username)
-
             if (mentionedUsers.length > 0) {
-                formattedMessage =
-                    `${authorName} (mentioning ${mentionedUsers.join(", ")}):\n${userInput}`
+                formattedMessage = `${authorName} mentioned ${mentionedUsers.join(", ")}, ${authorName} says to you ${userInput}`
             }
         }
 
+        // Plain message
         if (!formattedMessage) {
-            formattedMessage = `${authorName}: ${userInput}`
+            formattedMessage = `${authorName} says to you: ${userInput}`
         }
+
 
         await message.channel.sendTyping()
 
