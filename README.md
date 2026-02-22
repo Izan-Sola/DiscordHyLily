@@ -2,9 +2,6 @@
 Discord bot to talk with Lily!
 
 
-# TODO:
-
-
 # HyLilty DISCORD Bot version last trained data overview:
 
 ## Query Hytale Wiki Toolcall:
