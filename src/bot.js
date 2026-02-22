@@ -2,7 +2,7 @@ import { Client, Collection, GatewayIntentBits } from "discord.js"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
-import { HytaleAIChat } from "./ai/ollama.js"
+import { HytaleAIChat, initLogChannel } from "./ai/ollama.js"
 import { config } from "./utils/config.js"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -18,7 +18,9 @@ export async function createBot() {
             GatewayIntentBits.MessageContent,
         ]
     })
-
+client.once("ready", async () => {
+    await initLogChannel(client)
+})
     client.commands = new Collection()
 
     const commandsPath = path.join(__dirname, "commands")
@@ -68,17 +70,23 @@ export async function createBot() {
 
         let formattedMessage = ""
 
-        // Reply to another message
-        if (message.reference?.messageId) {
-            try {
-                const referenced = await message.channel.messages.fetch(message.reference.messageId)
-                if (referenced) {
-                    const repliedUser = referenced.member?.displayName || referenced.author.username
-                    const quoted = referenced.content?.replace(/\n/g, " ").slice(0, 120)
-                    formattedMessage = `${authorName} says to you, replying to ${repliedUser} who said "${quoted}": ${userInput}`
-                }
-            } catch {}
+      // Reply to another message
+if (message.reference?.messageId) {
+    try {
+        const referenced = await message.channel.messages.fetch(message.reference.messageId)
+        if (referenced) {
+            const repliedUser = referenced.member?.displayName || referenced.author.username
+            
+            // If replying to Lily herself, don't include the quoted text
+            if (referenced.author.id === client.user.id) {
+                formattedMessage = `[${authorName}] says to you: ${userInput}`
+            } else {
+                const quoted = referenced.content?.replace(/\n/g, " ").slice(0, 120)
+                formattedMessage = `[${authorName}] says to you, replying to ${repliedUser} who said "${quoted}": ${userInput}`
+            }
         }
+    } catch {}
+}
 
         // Mentioning another user
         if (!formattedMessage && message.mentions.users.size > 1) {
@@ -86,13 +94,13 @@ export async function createBot() {
                 .filter(u => u.id !== client.user.id)
                 .map(u => message.guild.members.cache.get(u.id)?.displayName || u.username)
             if (mentionedUsers.length > 0) {
-                formattedMessage = `${authorName} mentioned ${mentionedUsers.join(", ")}, ${authorName} says to you ${userInput}`
+                formattedMessage = `[${authorName}] mentioned ${mentionedUsers.join(", ")}, ${authorName} says to you ${userInput}`
             }
         }
 
         // Plain message
         if (!formattedMessage) {
-            formattedMessage = `${authorName} says to you: ${userInput}`
+            formattedMessage = `[${authorName}] says to you: ${userInput}`
         }
 
 

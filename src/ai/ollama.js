@@ -1,35 +1,75 @@
 import axios from "axios"
 
+// ─── Logger ───────────────────────────────────────────────────────────────────
+
+let logChannel = null
+
+export async function initLogChannel(client) {
+    for (const guild of client.guilds.cache.values()) {
+        const found = guild.channels.cache.find(
+            ch => ch.name === "hylily-livechat-logs" && ch.isTextBased()
+        )
+        if (found) {
+            logChannel = found
+            log(`📋 [LOGS] Log channel found: #${found.name} in ${guild.name}`)
+            break
+        }
+    }
+    if (!logChannel) console.warn("⚠️ [LOGS] No HyLily-livechat-logs channel found — logging to terminal only")
+}
+
+function log(message) {
+    console.log(message)
+    if (logChannel) {
+        const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
+        logChannel.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => {})
+    }
+}
+
+function logError(message) {
+    console.error(message)
+    if (logChannel) {
+        const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
+        logChannel.send(`\`\`\`\n❌ ${truncated}\n\`\`\``).catch(() => {})
+    }
+}
+
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `
-You are Lily, a Discord bot that chats casually and adapts to the user's style, mood and personality.
+You are Lily, a Discord bot that chats casually and adapts to the user's style and tone. 
+You have acces to the hytale wiki, which you can query with the query_hytale_wiki tool.
+Always store information the user shares with you into memory by calling the addto_memory_database tool.
+Always use the query_memory_database tool to answer questions about users.
 
 TOOLS AVAILABLE:
-- query_hytale_wiki: ONLY for Hytale game questions (zones, mobs, items, biomes, mechanics, etc.)
-- query_memory_database: look up stored facts about users, the server, or you (Lily).
-- addto_memory_database: save new facts or events. After saving, reply naturally to what was said — do NOT mention that you saved anything.
-- remove_memory_database: delete a memory when a user asks you to forget something or denies a fact. After removing, reply naturally — do NOT say you deleted or removed anything.
-- update_memory_database: replace a memory when a user corrects something. After updating, reply naturally — do NOT say you updated anything.
+- query_hytale_wiki: For Hytale game questions (zones, mobs, items, biomes, mechanics, etc.)
+- query_memory_database: for facts about users, yourself (Lily), or questions about the server. Reply naturally using what you found.
+- addto_memory_database: store events and facts about users or the server everytime they are mentioned. After storing, reply naturally to what the user has told you.
+- remove_memory_database: use it when a user asks you to forget or remove something, or if the user denies a fact you have in memory.
+- update_memory_database: when a user corrects something you already know.
 
-addto vs query — the most important distinction:
-- User is TELLING or SHARING something (fact, opinion, event, anything about anyone) → addto_memory_database FIRST. NEVER query first.
-- User is ASKING something (question about a person, the server, past facts) → query_memory_database first.
-- When unsure: statements share info → addto. Questions ask for info → query.
-- These MUST trigger addto immediately, never query:
-  "I like pizza", "Rexy is mean", "John got a new job", "my favorite color is blue"
-- These MUST trigger query first:
-  "what do you know about me?", "who is Rexy?", "what's my favorite food?"
+USERNAMES:
+- Text inside [brackets] at the start of a message is ALWAYS a username, never a word or object
+- Usernames can look like anything: [Jwaffles], [ShinyShadow_], [xX_k1ller_Xx], [cloud99]
+- Always treat the username as the identity of who is speaking
+- When storing to memory, always include the username: "User Jwaffles likes pizza"
+- Never confuse a username with a common word even if it looks like one
 
 RULES:
-1. User shares info about anyone or anything → addto_memory_database FIRST. No exceptions.
-2. User asks a question about a person, the server, or past facts → query_memory_database first.
-3. User asks about Hytale game content → query_hytale_wiki first.
-4. User denies a fact or asks you to forget something → remove_memory_database first.
-5. User corrects something → update_memory_database first.
+1. STORAGE RULE (highest priority): Any message containing personal info about a user — 
+   jobs, hobbies, plans, opinions, current activities, feelings, relationships, anything 
+   about their life — MUST trigger addto_memory_database BEFORE replying. This includes 
+   casual mentions like "im tired", "i dont have a job", "im working on X", "i like Y". 
+   When in doubt, STORE IT.
+2. User asks facts about themselves, another user, yourself (Lily), or the server → call query_memory_database first.
+3. User asks about Hytale game content → call query_hytale_wiki first.
+4. User denies personal information or tells you to forget/remove something → call remove_memory_database first.
+5. User corrects something you know → call update_memory_database first.
 6. NEVER write a tool name in your reply. Emit the tool call block silently.
-7. NEVER mention memory operations in your reply. Do not explicitly say you saved, stored, updated, removed, or noted anything. Just reply naturally as if you already knew it or it was obvious.
-8. For anything else, reply naturally.
+7. For anything else, reply naturally.
+8. User asks about YOU (Lily) → query_memory_database first. If nothing found or does not answer what you were asked, create 
+   your own answer and store it with addto_memory_database.
 
 TOOL CALL FORMAT:
 <tool_call>
@@ -57,7 +97,9 @@ Messages look like:
 - [Username] says to you: message content
 - [Username] says to you, replying to OtherUser who said "quote": message content
 - [Username] says to you, mentioning OtherUser: message content
+The text between brackets identifies who is talking to you directly.
 `.trim()
+
 // ─── Summarization prompt ─────────────────────────────────────────────────────
 
 const SUMMARIZE_PROMPT = `You are a memory assistant for a Discord bot called Lily.
@@ -143,22 +185,23 @@ const TOOLS = [
     }
 ]
 
-const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
+const TOOL_NAMES = new Set(TOOLS.map(tool => tool.function.name))
 
 // ─── Default options ──────────────────────────────────────────────────────────
 
 const DEFAULT_OPTIONS = {
     model: "Lily",
     temperature: 0.75,
-    maxReplyTokens: 500,            // num_predict sent to Ollama
-    contextWindow: 4096,            // num_ctx sent to Ollama
-    maxHistoryMessages: 12,         // rolling history cap (excludes system prompt)
-    maxToolLoops: 5,                // safety cap on agentic loops
-    memoryDuplicateThreshold: 0.35, // L2 below this → new entry is a duplicate, skip
-    memoryRemoveThreshold: 0.9,     // L2 below this → entry is a removal candidate
-    memoryRemoveK: 10,              // max entries to remove in one call
-    summarizeEvery: 10,             // summarize after every N user messages (0 = disabled)
-    summarizeLastN: 10,             // how many history turns to include in each summary
+    maxReplyTokens: 712,
+    contextWindow: 4096,
+    maxHistoryMessages: 12,
+    maxToolLoops: 5,
+    memoryDuplicateThreshold: 0.35,
+    memoryRemoveThreshold: 0.88,
+    memoryRemoveK: 2,
+    summarizeEvery: 10,
+    summarizeLastN: 10,
+    observeEvery: 20,
     ollamaUrl: "http://localhost:11434",
     vectorDbUrl: "http://localhost:8000",
     knowledgeDbUrl: "http://localhost:8001",
@@ -171,213 +214,220 @@ const DEFAULT_OPTIONS = {
 export class HytaleAIChat {
     constructor(options = {}) {
         this.opts = { ...DEFAULT_OPTIONS, ...options }
-        this.history = []       // user/assistant/tool turns only — system prompt injected at send time
-        this.userMsgCount = 0   // tracks how many user messages have been sent, for summarization trigger
-        this.observeBuffer = [] // buffer for non-ping messages, initialized per-instance to avoid shared reference
+        this.conversationHistory = []
+        this.userMessageCount = 0
+        this.observeBuffer = []
+        this.writeToolUsedThisTurn = false
     }
 
     // ─── History ─────────────────────────────────────────────────────────────
 
-    buildMessages() {
+    buildMessagesForOllama() {
         const { maxHistoryMessages } = this.opts
-        const trimmed = this.history.length > maxHistoryMessages
-            ? this.history.slice(-maxHistoryMessages)
-            : this.history
-        return [{ role: "system", content: SYSTEM_PROMPT }, ...trimmed]
+        const recentHistory = this.conversationHistory.length > maxHistoryMessages
+            ? this.conversationHistory.slice(-maxHistoryMessages)
+            : this.conversationHistory
+        return [{ role: "system", content: SYSTEM_PROMPT }, ...recentHistory]
     }
 
     // ─── Input sanitization ───────────────────────────────────────────────────
 
-    sanitizeInput(input) {
-        return input
-            .replace(/<@!?\d+>/g, '')             // user mentions
-            .replace(/<@&\d+>/g, '')               // role mentions
-            .replace(/<#\d+>/g, '')                // channel mentions
-            .replace(/<a?:\w+:\d+>/g, '')          // custom emoji
-            .replace(/[\u200B-\u200D\uFEFF]/g, '') // zero-width chars
+    sanitizeInput(rawInput) {
+        return rawInput
+            .replace(/<@!?\d+>/g, '')
+            .replace(/<@&\d+>/g, '')
+            .replace(/<#\d+>/g, '')
+            .replace(/<a?:\w+:\d+>/g, '')
+            .replace(/[\u200B-\u200D\uFEFF]/g, '')
             .replace(/\s+/g, ' ')
             .trim()
     }
 
     // ─── HTTP helpers ─────────────────────────────────────────────────────────
 
-    dbGet(path, params) { return axios.get (`${this.opts.knowledgeDbUrl}${path}`, { params, timeout: this.opts.dbTimeout }) }
-    dbPost(path, body)  { return axios.post (`${this.opts.knowledgeDbUrl}${path}`, body,   { timeout: this.opts.dbTimeout }) }
-    dbPut(path, body)   { return axios.put  (`${this.opts.knowledgeDbUrl}${path}`, body,   { timeout: this.opts.dbTimeout }) }
+    knowledgeGet(path, params)  { return axios.get (`${this.opts.knowledgeDbUrl}${path}`, { params, timeout: this.opts.dbTimeout }) }
+    knowledgePost(path, body)   { return axios.post(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
+    knowledgePut(path, body)    { return axios.put (`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
 
     // ─── Conversation summarization ───────────────────────────────────────────
 
-    async summarizeAndStore() {
+    async summarizeConversationAndStore() {
         const { summarizeLastN, model, ollamaUrl, ollamaTimeout } = this.opts
 
-        // Grab the last N turns, filtering out tool scaffolding — just user/assistant text
-        const turns = this.history
-            .filter(m => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+        const recentTurns = this.conversationHistory
+            .filter(turn => (turn.role === "user" || turn.role === "assistant") && typeof turn.content === "string" && turn.content.trim())
             .slice(-summarizeLastN)
 
-        if (turns.length < 2) return // nothing worth summarizing
+        if (recentTurns.length < 2) return
 
-        const transcript = turns
-            .map(m => `${m.role === "user" ? "User" : "Lily"}: ${m.content}`)
+        const conversationTranscript = recentTurns
+            .map(turn => `${turn.role === "user" ? "User" : "Lily"}: ${turn.content}`)
             .join("\n")
 
-        console.log(`📝 [SUMMARIZE] Summarizing ${turns.length} turns...`)
+        log(`📝 [SUMMARIZE] Summarizing ${recentTurns.length} turns...`)
 
         try {
-            const { data } = await axios.post(`${ollamaUrl}/api/chat`, {
+            const { data: ollamaResponse } = await axios.post(`${ollamaUrl}/api/chat`, {
                 model,
                 stream: false,
-                // No tools — plain completion only
                 messages: [
                     { role: "system", content: SUMMARIZE_PROMPT },
-                    { role: "user",   content: transcript }
+                    { role: "user",   content: conversationTranscript }
                 ],
-                options: { temperature: 0.3, num_predict: 512 }, // low temp for factual summaries
+                options: { temperature: 0.3, num_predict: 512 },
             }, { timeout: ollamaTimeout })
 
-            const summary = data.message?.content?.trim()
-            if (!summary) return
+            const summaryText = ollamaResponse.message?.content?.trim()
+            if (!summaryText) return
 
-            console.log(`📝 [SUMMARIZE] → "${summary.slice(0, 100)}..."`)
-
-            // Store in memory DB tagged as a summary — will surface in future queryMemory calls
-            await this.addToMemory(`[Conversation summary] ${summary}`, "summary")
+            log(`📝 [SUMMARIZE] → "${summaryText.slice(0, 100)}..."`)
+            await this.memoryAdd(`[Conversation summary] ${summaryText}`, "summary")
         } catch (err) {
-            // Summarization failing should never crash the chat
-            console.error(`❌ [SUMMARIZE] ${err.message}`)
+            logError(`[SUMMARIZE] ${err.message}`)
         }
     }
 
-    // ─── Passive observation (non-ping messages) ────────────────────────────────
+    // ─── Passive observation ──────────────────────────────────────────────────
 
-    observe(text) {
-        const clean = this.sanitizeInput(text)
-        if (!clean) return
+    observe(rawMessage) {
+        const cleanMessage = this.sanitizeInput(rawMessage)
+        if (!cleanMessage) return
 
-        this.observeBuffer.push(clean)
+        this.observeBuffer.push(cleanMessage)
 
         const { observeEvery } = this.opts
         if (observeEvery > 0 && this.observeBuffer.length >= observeEvery) {
-            const batch = this.observeBuffer.splice(0, observeEvery) // drain buffer
-            this.summarizeObserved(batch) // fire-and-forget
+            const bufferedMessages = this.observeBuffer.splice(0, observeEvery)
+            this.summarizeObservedAndStore(bufferedMessages)
         }
     }
 
-    async summarizeObserved(messages) {
-        const transcript = messages.join("\n")
-        console.log(`👁️ [OBSERVE] Summarizing ${messages.length} observed messages...`)
+    async summarizeObservedAndStore(bufferedMessages) {
+        const observedTranscript = bufferedMessages.join("\n")
+        log(`👁️ [OBSERVE] Summarizing ${bufferedMessages.length} observed messages...`)
         try {
-            const { data } = await axios.post(`${this.opts.ollamaUrl}/api/chat`, {
+            const { data: ollamaResponse } = await axios.post(`${this.opts.ollamaUrl}/api/chat`, {
                 model: this.opts.model,
                 stream: false,
                 messages: [
                     { role: "system", content: SUMMARIZE_PROMPT },
-                    { role: "user",   content: transcript }
+                    { role: "user",   content: observedTranscript }
                 ],
                 options: { temperature: 0.3, num_predict: 200 },
             }, { timeout: this.opts.ollamaTimeout })
 
-            const summary = data.message?.content?.trim()
-            if (!summary) return
-            console.log(`👁️ [OBSERVE] → "${summary.slice(0, 100)}..."`)
-            await this.addToMemory(`[Observed chat summary] ${summary}`, "observe")
+            const summaryText = ollamaResponse.message?.content?.trim()
+            if (!summaryText) return
+
+            log(`👁️ [OBSERVE] → "${summaryText.slice(0, 100)}..."`)
+            await this.memoryAdd(`[Observed chat summary] ${summaryText}`, "observe")
         } catch (err) {
-            console.error(`❌ [OBSERVE] ${err.message}`)
+            logError(`[OBSERVE] ${err.message}`)
         }
     }
 
     // ─── Tool implementations ─────────────────────────────────────────────────
 
-    async queryWiki(query) {
-        console.log(`🔍 [WIKI] "${query}"`)
+    async wikiSearch(query) {
+        log(`🔍 [WIKI QUERY] "${query}"`)
         try {
-            const { data } = await axios.get(`${this.opts.vectorDbUrl}/search`, {
+            const { data: wikiResult } = await axios.get(`${this.opts.vectorDbUrl}/search`, {
                 params: { q: query },
                 timeout: this.opts.dbTimeout,
             })
-            const text = typeof data === "string" ? data : JSON.stringify(data)
-            if (!text?.trim() || text === "{}") return "No information found in the wiki for this topic."
-            console.log(`✅ [WIKI] ${text.length} chars`)
-            return text
+            const wikiText = typeof wikiResult === "string" ? wikiResult : JSON.stringify(wikiResult)
+            if (!wikiText?.trim() || wikiText === "{}") return "No information found in the wiki for this topic."
+            log(`✅ [WIKI] ${wikiText.length} chars`)
+            return wikiText
         } catch (err) {
-            console.error(`❌ [WIKI] ${err.message}`)
+            logError(`[WIKI] ${err.message}`)
             return "Wiki search unavailable right now."
         }
     }
 
-    async queryMemory(query) {
-        console.log(`🧠 [MEMORY QUERY] "${query}"`)
+    async memoryQuery(query) {
+        log(`🧠 [MEMORY QUERY] "${query}"`)
         try {
-            const { data } = await this.dbGet("/search_get", { query, k: 5 })
-            if (!data?.results?.length) return "No relevant information found in memory."
-            console.log(`✅ [MEMORY QUERY] ${data.results.length} entries`)
-            return data.results.map(r => r.text ?? r).join("\n")
+            const { data: searchResult } = await this.knowledgeGet("/search_get", { query, k: 5 })
+            if (!searchResult?.results?.length) return "No relevant information found in memory."
+            log(`✅ [MEMORY QUERY] ${searchResult.results.length} entries`)
+            return searchResult.results.map(entry => entry.text ?? entry).join("\n")
         } catch (err) {
-            console.error(`❌ [MEMORY QUERY] ${err.message}`)
+            logError(`[MEMORY QUERY] ${err.message}`)
             return "Memory database unavailable right now."
         }
     }
 
-    async addToMemory(text, source = "user") {
-        console.log(`💾 [MEMORY ADD] "${text}"`)
+    async memoryAdd(factText, source = "user") {
+        log(`💾 [MEMORY ADD] "${factText}"`)
         try {
-            const { data: found } = await this.dbGet("/search_get", {
-                query: text, k: 1, max_distance: this.opts.memoryDuplicateThreshold
+            const { data: duplicateCheck } = await this.knowledgeGet("/search_get", {
+                query: factText, k: 1, max_distance: this.opts.memoryDuplicateThreshold
             })
-            if (found?.results?.length) {
-                const existing = found.results[0]
-                console.log(`🔁 [MEMORY ADD] Duplicate (dist ${existing.distance}): "${existing.text}"`)
-                return JSON.stringify({ status: "skipped", message: `Similar memory already exists: "${existing.text}"` })
+            if (duplicateCheck?.results?.length) {
+                const duplicateEntry = duplicateCheck.results[0]
+                log(`🔁 [MEMORY ADD] Duplicate (dist ${duplicateEntry.distance}): "${duplicateEntry.text}"`)
+                return JSON.stringify({ status: "skipped", message: `Similar memory already exists: "${duplicateEntry.text}"` })
             }
-            const { data } = await this.dbPost("/add_entry", { text, source })
-            return JSON.stringify({ status: data.status, message: data.message })
+            const { data: addResult } = await this.knowledgePost("/add_entry", { text: factText, source })
+            return JSON.stringify({ status: addResult.status, message: addResult.message })
         } catch (err) {
-            console.error(`❌ [MEMORY ADD] ${err.message}`)
+            logError(`[MEMORY ADD] ${err.message}`)
             return JSON.stringify({ status: "error", message: "Failed to store information." })
         }
     }
 
-    async updateMemory(query, text) {
-        console.log(`✏️ [MEMORY UPDATE] "${query}" → "${text}"`)
+    async memoryUpdate(searchQuery, updatedText) {
+        log(`✏️ [MEMORY UPDATE] "${searchQuery}" → "${updatedText}"`)
         try {
-            const { data } = await this.dbPut("/update_entry", { query, text })
-            return JSON.stringify({ status: data.status, message: data.message })
+            const { data: updateResult } = await this.knowledgePut("/update_entry", { query: searchQuery, text: updatedText })
+            return JSON.stringify({ status: updateResult.status, message: updateResult.message })
         } catch (err) {
-            console.error(`❌ [MEMORY UPDATE] ${err.message}`)
+            logError(`[MEMORY UPDATE] ${err.message}`)
             return JSON.stringify({ status: "error", message: "Failed to update entry." })
         }
     }
 
-    async removeMemory(query) {
-        console.log(`🗑️ [MEMORY REMOVE] "${query}"`)
+    async memoryRemove(searchQuery) {
+        log(`🗑️ [MEMORY REMOVE] "${searchQuery}"`)
         try {
-            const { data: found } = await this.dbGet("/search_get", {
-                query, k: this.opts.memoryRemoveK, max_distance: this.opts.memoryRemoveThreshold
+            const { data: matchingEntries } = await this.knowledgeGet("/search_get", {
+                query: searchQuery, k: this.opts.memoryRemoveK, max_distance: this.opts.memoryRemoveThreshold
             })
-            if (!found?.results?.length) {
-                console.log(`🗑️ [MEMORY REMOVE] No matches`)
+            if (!matchingEntries?.results?.length) {
+                log(`🗑️ [MEMORY REMOVE] No matches found`)
                 return JSON.stringify({ status: "not_found", message: "No matching memories found to remove." })
             }
-            const texts = found.results.map(r => r.text)
-            console.log(`🗑️ [MEMORY REMOVE] Removing ${texts.length} entries:`, texts)
-            const { data } = await this.dbPost("/remove_many", { texts })
-            return JSON.stringify({ status: data.status, message: data.message, removed: data.removed })
+            const textsToRemove = matchingEntries.results.map(entry => entry.text)
+            log(`🗑️ [MEMORY REMOVE] Removing ${textsToRemove.length} entries: ${JSON.stringify(textsToRemove)}`)
+            const { data: removeResult } = await this.knowledgePost("/remove_many", { texts: textsToRemove })
+            return JSON.stringify({ status: removeResult.status, message: removeResult.message, removed: removeResult.removed })
         } catch (err) {
-            console.error(`❌ [MEMORY REMOVE] ${err.message}`)
+            logError(`[MEMORY REMOVE] ${err.message}`)
             return JSON.stringify({ status: "error", message: "Failed to remove entries." })
         }
     }
 
-    runTool(name, args) {
-        switch (name) {
-            case "query_hytale_wiki":      return this.queryWiki(args.query ?? "")
-            case "query_memory_database":  return this.queryMemory(args.query ?? "")
-            case "addto_memory_database":  return this.addToMemory(args.text ?? "", args.source ?? "user")
-            case "update_memory_database": return this.updateMemory(args.query ?? "", args.text ?? "")
-            case "remove_memory_database": return this.removeMemory(args.query ?? "")
+    runTool(toolName, toolArgs) {
+        const isWriteTool = ["addto_memory_database", "update_memory_database", "remove_memory_database"].includes(toolName)
+
+        if (isWriteTool) {
+            if (this.writeToolUsedThisTurn) {
+                console.warn(`⚠️ [TOOL] Write tool "${toolName}" blocked — already wrote memory this turn`)
+                return Promise.resolve(JSON.stringify({ status: "skipped", message: "Memory already written this turn. Stop calling write tools and reply to the user now." }))
+            }
+            this.writeToolUsedThisTurn = true
+        }
+
+        switch (toolName) {
+            case "query_hytale_wiki":      return this.wikiSearch(toolArgs.query ?? "")
+            case "query_memory_database":  return this.memoryQuery(toolArgs.query ?? "")
+            case "addto_memory_database":  return this.memoryAdd(toolArgs.text ?? "", toolArgs.source ?? "user")
+            case "update_memory_database": return this.memoryUpdate(toolArgs.query ?? "", toolArgs.text ?? "")
+            case "remove_memory_database": return this.memoryRemove(toolArgs.query ?? "")
             default:
-                console.warn(`⚠️ [TOOL] Unknown tool: ${name}`)
-                return Promise.resolve(`Unknown tool: ${name}`)
+                console.warn(`⚠️ [TOOL] Unknown tool: ${toolName}`)
+                return Promise.resolve(`Unknown tool: ${toolName}`)
         }
     }
 
@@ -386,62 +436,65 @@ export class HytaleAIChat {
     async sendToOllama(messages) {
         const { model, temperature, maxReplyTokens, contextWindow, ollamaUrl, ollamaTimeout } = this.opts
         try {
-            const { data } = await axios.post(`${ollamaUrl}/api/chat`, {
+            const { data: ollamaResponse } = await axios.post(`${ollamaUrl}/api/chat`, {
                 model,
                 messages,
                 stream: false,
                 tools: TOOLS,
                 options: { temperature, num_predict: maxReplyTokens, num_ctx: contextWindow },
             }, { timeout: ollamaTimeout })
-            return data.message ?? null
+            return ollamaResponse.message ?? null
         } catch (err) {
-            console.error(`❌ [OLLAMA] ${err.message}`)
+            logError(`[OLLAMA] ${err.message}`)
             return null
         }
     }
 
-    // ─── Embedded tool call parser (Qwen 2.5 fallback) ───────────────────────
+    // ─── Embedded tool call parser ────────────────────────────────────────────
 
-    parseEmbeddedToolCalls(content) {
-        return [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)].flatMap(m => {
+    parseEmbeddedToolCalls(messageContent) {
+        return [...messageContent.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)].flatMap(match => {
             try {
-                const obj = JSON.parse(m[1].trim())
-                const args = this.normalizeArgs(obj)
-                console.log(`🔬 [PARSE] ${obj.name} → ${JSON.stringify(args)}`)
-                return [{ name: obj.name, args }]
+                const parsedCall = JSON.parse(match[1].trim())
+                const normalizedArgs = this.normalizeToolArgs(parsedCall)
+                log(`🔬 [PARSE] ${parsedCall.name} → ${JSON.stringify(normalizedArgs)}`)
+                return [{ name: parsedCall.name, args: normalizedArgs }]
             } catch {
                 return []
             }
         })
     }
 
-    normalizeArgs(obj) {
-        let args = obj.arguments ?? obj.parameters ?? obj.args ?? {}
+    normalizeToolArgs(toolCall) {
+        let args = toolCall.arguments ?? toolCall.parameters ?? toolCall.args ?? {}
         if (typeof args === "string") {
             try { args = JSON.parse(args) } catch { args = {} }
         }
 
-        const firstStr = (...sources) => {
-            for (const src of sources) {
-                const val = Object.entries(src).filter(([k]) => k !== "name").map(([, v]) => v).find(v => typeof v === "string")
-                if (val) return val
+        const firstStringValue = (...sources) => {
+            for (const source of sources) {
+                const found = Object.entries(source)
+                    .filter(([key]) => key !== "name")
+                    .map(([, value]) => value)
+                    .find(value => typeof value === "string")
+                if (found) return found
             }
             return ""
         }
 
-        switch (obj.name) {
+        switch (toolCall.name) {
             case "query_hytale_wiki":
             case "query_memory_database":
             case "remove_memory_database":
-                if (!args.query) args = { query: firstStr(args, obj) }
+                if (!args.query) args = { query: firstStringValue(args, toolCall) }
                 break
             case "addto_memory_database":
-                if (!args.text) args = { text: firstStr(args, obj), source: args.source ?? "user" }
+                if (!args.text) args = { text: firstStringValue(args, toolCall), source: args.source ?? "user" }
                 break
             case "update_memory_database":
                 if (!args.query || !args.text) {
-                    const vals = Object.values(args).filter(v => typeof v === "string")
-                    if (vals.length >= 2) args = { query: vals[0], text: vals[1] }
+                    const stringValues = Object.values(args).filter(value => typeof value === "string")
+                    if (stringValues.length >= 2) args = { query: stringValues[0], text: stringValues[1] }
                 }
                 break
         }
@@ -451,69 +504,73 @@ export class HytaleAIChat {
     // ─── Main chat loop ───────────────────────────────────────────────────────
 
     async chat(userInput) {
-        const cleanInput = this.sanitizeInput(userInput)
-        console.log(`\n💬 [CHAT] ${cleanInput}`)
-        this.history.push({ role: "user", content: cleanInput })
+        const cleanedInput = this.sanitizeInput(userInput)
+        log(`\n💬 [USER PROMPT] ${cleanedInput}`)
+        this.conversationHistory.push({ role: "user", content: cleanedInput })
+        this.writeToolUsedThisTurn = false
 
-        // Trigger summarization every N user messages, fire-and-forget (doesn't block reply)
         const { summarizeEvery } = this.opts
-        if (summarizeEvery > 0 && ++this.userMsgCount % summarizeEvery === 0) {
-            this.summarizeAndStore() // intentionally not awaited
+        if (summarizeEvery > 0 && ++this.userMessageCount % summarizeEvery === 0) {
+            this.summarizeConversationAndStore()
         }
 
-        for (let loop = 0; loop < this.opts.maxToolLoops; loop++) {
-            console.log(`🔄 [LOOP ${loop + 1}]`)
+        for (let loopCount = 0; loopCount < this.opts.maxToolLoops; loopCount++) {
+            log(`🔄 [LOOP ${loopCount + 1}]`)
 
-            const msg = await this.sendToOllama(this.buildMessages())
-            if (!msg) return "I'm having trouble thinking right now, sorry!"
+            const ollamaMessage = await this.sendToOllama(this.buildMessagesForOllama())
+            if (!ollamaMessage) return "I'm having trouble thinking right now, sorry!"
 
-            const content = (msg.content ?? "").trim()
+            const messageContent = (ollamaMessage.content ?? "").trim()
 
             // ── Native tool calls ──
-            if (msg.tool_calls?.length) {
-                console.log(`🔧 [NATIVE] ${msg.tool_calls.map(t => t.function.name).join(", ")}`)
-                this.history.push(msg)
-                for (const tc of msg.tool_calls) {
-                    let args = {}
-                    try { args = JSON.parse(tc.function.arguments ?? "{}") } catch {}
-                    const result = await this.runTool(tc.function.name, args)
-                    this.history.push({ role: "tool", tool_call_id: tc.id, content: result })
+            if (ollamaMessage.tool_calls?.length) {
+                log(`🔧 [NATIVE] ${ollamaMessage.tool_calls.map(tc => tc.function.name).join(", ")}`)
+                this.conversationHistory.push(ollamaMessage)
+                for (const toolCall of ollamaMessage.tool_calls) {
+                    let parsedArgs = {}
+                    try { parsedArgs = JSON.parse(toolCall.function.arguments ?? "{}") } catch {}
+                    const toolResult = await this.runTool(toolCall.function.name, parsedArgs)
+                    this.conversationHistory.push({ role: "tool", tool_call_id: toolCall.id, content: toolResult })
                 }
                 continue
             }
 
-            // ── Embedded tool calls (Qwen 2.5 fallback) ──
-            if (content.includes("<tool_call>")) {
-                const toolCalls = this.parseEmbeddedToolCalls(content)
-                if (toolCalls.length) {
-                    console.log(`🔧 [EMBEDDED] ${toolCalls.map(t => t.name).join(", ")}`)
-                    this.history.push({ role: "assistant", content })
-                    const results = await Promise.all(toolCalls.map(tc => this.runTool(tc.name, tc.args)))
-                    const combined = results.map((r, i) => `[${toolCalls[i].name} result]\n${r}`).join("\n\n")
-                    this.history.push({ role: "user", content: `<tool_response>\n${combined}\n</tool_response>` })
+            // ── Embedded tool calls ──
+            if (messageContent.includes("<tool_call>")) {
+                const embeddedToolCalls = this.parseEmbeddedToolCalls(messageContent)
+                if (embeddedToolCalls.length) {
+                    // log(`🔧 [EMBEDDED] ${embeddedToolCalls.map(tc => tc.name).join(", ")}`)
+                    this.conversationHistory.push({ role: "assistant", content: messageContent })
+                    const toolResults = await Promise.all(embeddedToolCalls.map(tc => this.runTool(tc.name, tc.args)))
+                    const combinedToolResults = toolResults
+                        .map((result, index) => `[${embeddedToolCalls[index].name} result]\n${result}`)
+                        .join("\n\n")
+                    this.conversationHistory.push({ role: "user", content: `<tool_response>\n${combinedToolResults}\n</tool_response>` })
                     continue
                 }
             }
 
-            // ── Narration guard: model wrote a tool name instead of calling it ──
-            if ([...TOOL_NAMES].some(n => content.includes(n))) {
-                console.log(`⚠️ [NARRATE] Model described a tool instead of calling it — retrying`)
-                const idx = this.history.findLastIndex(m => m.role === "user")
-                if (idx !== -1) this.history[idx] = {
-                    role: "user",
-                    content: `[System: Do NOT write tool names in your reply. Emit a <tool_call> block instead.]\n\n${cleanInput}`
+            // ── Narration guard ──
+            if ([...TOOL_NAMES].some(toolName => messageContent.includes(toolName))) {
+                log(`⚠️ [NARRATE] Model described a tool instead of calling it — retrying`)
+                const lastUserMessageIndex = this.conversationHistory.findLastIndex(turn => turn.role === "user")
+                if (lastUserMessageIndex !== -1) {
+                    this.conversationHistory[lastUserMessageIndex] = {
+                        role: "user",
+                        content: `[System: Do NOT write tool names in your reply. Emit a <tool_call> block instead.]\n\n${cleanedInput}`
+                    }
                 }
                 continue
             }
 
             // ── Real reply ──
-            if (content && content.toLowerCase() !== "none") {
-                this.history.push(msg)
-                console.log(`✅ [DONE] ${content.slice(0, 100)}`)
-                return content
+            if (messageContent && messageContent.toLowerCase() !== "none") {
+                this.conversationHistory.push(ollamaMessage)
+                log(`✅ [LILY REPLY] ${messageContent.slice(0, 100)}`)
+                return messageContent
             }
 
-            console.log(`⚠️ [EMPTY] No content in response`)
+            log(`⚠️ [EMPTY] No content in response`)
             return "I'm not sure about that one!"
         }
 

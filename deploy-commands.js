@@ -14,6 +14,7 @@ const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith("
 for (const file of commandFiles) {
     const command = await import(`./src/commands/${file}`)
     commands.push(command.data.toJSON())
+     console.log(`📦 Loaded command: ${command.data.name}`) 
 }
 
 const rest = new REST({ version: "10" }).setToken(config.token)
