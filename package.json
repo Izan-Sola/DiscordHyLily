@@ -8,7 +8,9 @@
     "deploy": "node deploy-commands.js"
   },
   "dependencies": {
+    "@snazzah/davey": "^0.1.9",
     "axios": "^1.13.5",
+    "discord-api-types": "^0.38.40",
     "discord.js": "^14.25.1",
     "dotenv": "^17.3.1",
     "node": "^25.6.1"

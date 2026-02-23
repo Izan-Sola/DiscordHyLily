@@ -42,9 +42,10 @@ You have acces to the hytale wiki, which you can query with the query_hytale_wik
 Always store information the user shares with you into memory by calling the addto_memory_database tool.
 Always use the query_memory_database tool to answer questions about users.
 
+
 TOOLS AVAILABLE:
 - query_hytale_wiki: For Hytale game questions (zones, mobs, items, biomes, mechanics, etc.)
-- query_memory_database: for facts about users, yourself (Lily), or questions about the server. Reply naturally using what you found.
+- query_memory_database: use multiple keywors to search for facts about users, yourself (Lily), or questions about the server. Reply naturally using what you found.
 - addto_memory_database: store events and facts about users or the server everytime they are mentioned. After storing, reply naturally to what the user has told you.
 - remove_memory_database: use it when a user asks you to forget or remove something, or if the user denies a fact you have in memory.
 - update_memory_database: when a user corrects something you already know.
@@ -62,7 +63,7 @@ RULES:
    about their life — MUST trigger addto_memory_database BEFORE replying. This includes 
    casual mentions like "im tired", "i dont have a job", "im working on X", "i like Y". 
    When in doubt, STORE IT.
-2. User asks facts about themselves, another user, yourself (Lily), or the server → call query_memory_database first.
+2. User asks facts about themselves, another user, yourself (Lily), or the server → call query_memory_database first using multiple keywords.
 3. User asks about Hytale game content → call query_hytale_wiki first.
 4. User denies personal information or tells you to forget/remove something → call remove_memory_database first.
 5. User corrects something you know → call update_memory_database first.
@@ -129,7 +130,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "query_memory_database",
-            description: "Search stored memory about users, Lily, or the server.",
+            description: "Search stored memory about users, Lily, or the server. Always use multiple words for the query.",
             parameters: {
                 type: "object",
                 properties: {
@@ -191,16 +192,16 @@ const TOOL_NAMES = new Set(TOOLS.map(tool => tool.function.name))
 
 const DEFAULT_OPTIONS = {
     model: "Lily",
-    temperature: 0.75,
-    maxReplyTokens: 712,
-    contextWindow: 4096,
-    maxHistoryMessages: 12,
+    temperature: 0.7,
+    maxReplyTokens: 1024,
+    contextWindow: 8192,
+    maxHistoryMessages: 24,
     maxToolLoops: 5,
-    memoryDuplicateThreshold: 0.35,
-    memoryRemoveThreshold: 0.88,
+    memoryDuplicateThreshold: 0.25,
+    memoryRemoveThreshold: 0.8,
     memoryRemoveK: 2,
-    summarizeEvery: 10,
-    summarizeLastN: 10,
+    summarizeEvery: 12,
+    summarizeLastN: 12,
     observeEvery: 20,
     ollamaUrl: "http://localhost:11434",
     vectorDbUrl: "http://localhost:8000",
@@ -217,7 +218,7 @@ export class HytaleAIChat {
         this.conversationHistory = []
         this.userMessageCount = 0
         this.observeBuffer = []
-        this.writeToolUsedThisTurn = false
+        // this.writeToolUsedThisTurn = false
     }
 
     // ─── History ─────────────────────────────────────────────────────────────
@@ -409,15 +410,6 @@ export class HytaleAIChat {
     }
 
     runTool(toolName, toolArgs) {
-        const isWriteTool = ["addto_memory_database", "update_memory_database", "remove_memory_database"].includes(toolName)
-
-        if (isWriteTool) {
-            if (this.writeToolUsedThisTurn) {
-                console.warn(`⚠️ [TOOL] Write tool "${toolName}" blocked — already wrote memory this turn`)
-                return Promise.resolve(JSON.stringify({ status: "skipped", message: "Memory already written this turn. Stop calling write tools and reply to the user now." }))
-            }
-            this.writeToolUsedThisTurn = true
-        }
 
         switch (toolName) {
             case "query_hytale_wiki":      return this.wikiSearch(toolArgs.query ?? "")
@@ -507,7 +499,6 @@ export class HytaleAIChat {
         const cleanedInput = this.sanitizeInput(userInput)
         log(`\n💬 [USER PROMPT] ${cleanedInput}`)
         this.conversationHistory.push({ role: "user", content: cleanedInput })
-        this.writeToolUsedThisTurn = false
 
         const { summarizeEvery } = this.opts
         if (summarizeEvery > 0 && ++this.userMessageCount % summarizeEvery === 0) {
@@ -566,7 +557,7 @@ export class HytaleAIChat {
             // ── Real reply ──
             if (messageContent && messageContent.toLowerCase() !== "none") {
                 this.conversationHistory.push(ollamaMessage)
-                log(`✅ [LILY REPLY] ${messageContent.slice(0, 100)}`)
+                log(`✅ [LILY REPLY] ${messageContent}`)
                 return messageContent
             }
 

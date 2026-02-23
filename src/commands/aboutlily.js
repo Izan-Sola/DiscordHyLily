@@ -18,6 +18,7 @@ export async function execute(interaction) {
             value: [
                 "I can do a lot of things!",
                 "- I can chat with you! Just ping me or reply to me and I'll get to you asap!",
+                "  If you want to talk to me in voice chat, just join a voice channel and use /voice join!",
                 "- I can also answer questions about Hytale by searching its Wiki!",
                 "- I'm very smart hehe~ so I can remember facts about you and the server!",
             ].join("\n"), inline: false }
