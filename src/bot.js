@@ -58,34 +58,35 @@ function cleanForTTS(text) {
         .trim()
 }
 
-// export async function speak(text) {
-//     const clean   = cleanForTTS(text)
-//     const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
-//     const wavPath = "/tmp/lily_response.wav"
-//     const oggPath = "/tmp/lily_response.ogg"
-//     // await execAsync(`edge-tts --text "${escaped}" --voice en-US-AriaNeural --write-media ${wavPath}`)
-//     const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN || "edge-tts"
-//     await execAsync(`${EDGE_TTS_BIN} --text "${escaped}" --voice en-US-AriaNeural --write-media ${wavPath}`)
-//     await execAsync(`ffmpeg -y -i ${wavPath} -c:a libopus ${oggPath}`)
-//     return oggPath
-// }
 export async function speak(text) {
     const clean   = cleanForTTS(text)
-    const escaped = clean.replace(/"/g, '\\"')
-    const id      = Date.now()
-    const wavPath = `/tmp/lily_response_${id}.wav`
-    const oggPath = `/tmp/lily_response_${id}.ogg`
-
-    const STYLETTS2_SCRIPT = process.env.STYLETTS2_SCRIPT
-    const VOICE_REF        = process.env.VOICE_SAMPLE_PATH
-
-    await execAsync(
-        `${PYTHON_BIN} ${STYLETTS2_SCRIPT} --text "${escaped}" --ref "${VOICE_REF}" --out ${wavPath}`
-    )
+    const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
+    const wavPath = "/tmp/lily_response.wav"
+    const oggPath = "/tmp/lily_response.ogg"
+    // await execAsync(`edge-tts --text "${escaped}" --voice en-US-AriaNeural --write-media ${wavPath}`)
+    const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN || "edge-tts"
+    await execAsync(`${EDGE_TTS_BIN} --text "${escaped}" --voice en-US-AnaNeural --write-media ${wavPath}`)
     await execAsync(`ffmpeg -y -i ${wavPath} -c:a libopus ${oggPath}`)
-    fs.unlink(wavPath, () => {})  // clean up wav immediately after converting to avoid corrupting the data
+    fs.unlink(wavPath, () => {})
     return oggPath
 }
+// export async function speak(text) {
+//     const clean   = cleanForTTS(text)
+//     const escaped = clean.replace(/"/g, '\\"')
+//     const id      = Date.now()
+//     const wavPath = `/tmp/lily_response_${id}.wav`
+//     const oggPath = `/tmp/lily_response_${id}.ogg`
+
+//     const STYLETTS2_SCRIPT = process.env.STYLETTS2_SCRIPT
+//     const VOICE_REF        = process.env.VOICE_SAMPLE_PATH
+
+//     await execAsync(
+//         `${PYTHON_BIN} ${STYLETTS2_SCRIPT} --text "${escaped}" --ref "${VOICE_REF}" --out ${wavPath}`
+//     )
+//     await execAsync(`ffmpeg -y -i ${wavPath} -c:a libopus ${oggPath}`)
+//     fs.unlink(wavPath, () => {})  // clean up wav immediately after converting to avoid corrupting the data
+//     return oggPath
+// }
 
 export async function playInGuild(guildId, text) {
     const player = guildPlayers.get(guildId)
@@ -108,25 +109,43 @@ export async function playInGuild(guildId, text) {
 // ─── Voice listening ──────────────────────────────────────────────────────────
 
 function listenAndTranscribe(connection, userId) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const receiver    = connection.receiver
         const audioStream = receiver.subscribe(userId, {
             end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
         })
 
-        const pcmPath    = `/tmp/lily_input_${userId}.pcm`
-        const wavPath    = `/tmp/lily_input_${userId}.wav`
+        // Unique per session — concurrent users no longer share/overwrite files
+        const sessionId  = `${userId}_${Date.now()}`
+        const pcmPath    = `/tmp/lily_input_${sessionId}.pcm`
+        const wavPath    = `/tmp/lily_input_${sessionId}.wav`
+
+        // Each call gets its own decoder — sharing one across users corrupts the Opus state
         const decoder    = new prism.opus.Decoder({ rate: 48000, channels: 1, frameSize: 960 })
         const fileStream = fs.createWriteStream(pcmPath)
+
+        // Without these, a single dropped packet crashes the entire process
+        decoder.on("error", (err) => {
+            console.warn(`[VOICE] Opus decode error for ${userId} (ignored):`, err.message)
+        })
+        audioStream.on("error", (err) => {
+            console.warn(`[VOICE] Audio stream error for ${userId} (ignored):`, err.message)
+        })
 
         audioStream.pipe(decoder).pipe(fileStream)
 
         audioStream.once("end", async () => {
             fileStream.end()
-            await execAsync(
-                `ffmpeg -y -f s16le -ar 48000 -ac 1 -i ${pcmPath} ${wavPath}`
-            ).catch(() => {})
-            resolve(wavPath)
+            try {
+                await execAsync(
+                    `ffmpeg -y -f s16le -ar 48000 -ac 1 -i ${pcmPath} ${wavPath}`
+                )
+                fs.unlink(pcmPath, () => {})
+                resolve(wavPath)
+            } catch (err) {
+                fs.unlink(pcmPath, () => {})
+                reject(err)
+            }
         })
     })
 }
@@ -140,44 +159,61 @@ export function startVoiceSession(connection, guild) {
     console.log("🔊 [VOICE] Audio player subscribed")
 
     const processingUsers = new Set()
+    const speakingTimers  = new Map()  // debounce timers per user
 
-    connection.receiver.speaking.on("start", async (userId) => {
+    connection.receiver.speaking.on("start", (userId) => {
         const member = guild.members.cache.get(userId)
         if (!member || member.user.bot) return
         if (processingUsers.has(userId)) return
-        processingUsers.add(userId)
 
-        const memberName = member.displayName || member.user.username
-        console.log(`🎙️ [VOICE] ${memberName} is speaking...`)
-
-        try {
-            const wavPath    = await listenAndTranscribe(connection, userId)
-            const transcript = await transcribe(wavPath)
-
-            if (!transcript || transcript.length < 2) return
-
-            // Only respond if transcript starts with Lily's name
-            const normalized = transcript.toLowerCase().replace(/[^a-z\s]/g, "").trim()
-            console.log(`📝 [STT] ${memberName} said: "${normalized}"`)
-            if (!normalized.startsWith("lily") && !normalized.startsWith("lili") && !normalized.startsWith("really")) return
-
-            // console.log(`📝 [STT] ${memberName}: "${transcript}"`)
-            const formattedMessage = `[${memberName}] says to you: ${transcript}`
-            const reply = await ai.chat(formattedMessage)
-
-            // console.log(`🤖 [LILY] "${reply}"`)
-            await playInGuild(guild.id, reply)
-        } catch (err) {
-            console.error("Voice pipeline error:", err)
-        } finally {
-            processingUsers.delete(userId)
+        // If a timer is already pending for this user, just reset it
+        // This collapses rapid start/stop bursts into one recording session
+        if (speakingTimers.has(userId)) {
+            clearTimeout(speakingTimers.get(userId))
         }
+
+        const timer = setTimeout(async () => {
+            speakingTimers.delete(userId)
+
+            // Check again after debounce — user might have gone silent already
+            if (processingUsers.has(userId)) return
+            processingUsers.add(userId)
+
+            const memberName = member.displayName || member.user.username
+            console.log(`🎙️ [VOICE] Processing audio from ${memberName}...`)
+
+            try {
+                const wavPath    = await listenAndTranscribe(connection, userId)
+                const transcript = await transcribe(wavPath)
+                fs.unlink(wavPath, () => {})
+
+                if (!transcript || transcript.length < 2) return
+
+                const normalized = transcript.toLowerCase().replace(/[^a-z\s]/g, "").trim()
+                console.log(`📝 [STT] ${memberName} said: "${normalized}"`)
+
+                if (!normalized.startsWith("lily") && !normalized.startsWith("lili")
+                    && !normalized.startsWith("really") && !normalized.endsWith("really")
+                    && !normalized.endsWith("lily") && !normalized.endsWith("lili")) return
+
+                const formattedMessage = `[${memberName}] says to you: ${transcript}`
+                const reply = await ai.chat(formattedMessage)
+                await playInGuild(guild.id, reply)
+            } catch (err) {
+                console.error("Voice pipeline error:", err)
+            } finally {
+                processingUsers.delete(userId)
+            }
+        }, 300)  // wait 300ms of continuous speaking before starting pipeline
+
+        speakingTimers.set(userId, timer)
     })
 
-    // Clean up player when connection is destroyed
     connection.on("stateChange", (_, newState) => {
         if (newState.status === "destroyed") {
             guildPlayers.delete(guild.id)
+            speakingTimers.forEach(t => clearTimeout(t))
+            speakingTimers.clear()
         }
     })
 
@@ -222,7 +258,7 @@ export async function createBot() {
         }
     })
 
-    client.on("messageCreate", async message => {
+ client.on("messageCreate", async message => {
         if (message.author.bot) return
 
         const isMentioned  = message.mentions.has(client.user)
@@ -230,7 +266,7 @@ export async function createBot() {
             ? (await message.channel.messages.fetch(message.reference.messageId).catch(() => null))?.author?.id === client.user.id
             : false
 
-        const authorName =  message.author.username ||message.member?.displayName 
+        const authorName = message.author.username || message.member?.displayName
         const userInput  = message.content
             .replace(`<@${client.user.id}>`, "")
             .replace(`<@!${client.user.id}>`, "")
@@ -240,6 +276,60 @@ export async function createBot() {
             ai.observe(`${authorName} said ${userInput}`)
             return
         }
+
+        // ─── Voice message reply handler ──────────────────────────────────────
+        if (isReplyToBot) {
+            const audioAttachment = message.attachments.find(a =>
+                a.contentType?.startsWith("audio/") ||
+                a.name?.endsWith(".ogg") ||
+                a.name?.endsWith(".mp3") ||
+                a.name?.endsWith(".wav")
+            )
+
+            if (audioAttachment) {
+                await message.channel.sendTyping()
+                try {
+                    const res        = await fetch(audioAttachment.url)
+                    const arrayBuf   = await res.arrayBuffer()
+                    const tmpInPath  = `/tmp/lily_voicemsg_${message.id}.ogg`
+                    const tmpWavPath = `/tmp/lily_voicemsg_${message.id}.wav`
+                    fs.writeFileSync(tmpInPath, Buffer.from(arrayBuf))
+
+                    await execAsync(`ffmpeg -y -i ${tmpInPath} ${tmpWavPath}`).catch(() => {})
+                    fs.unlink(tmpInPath, () => {})
+
+                    const transcript = await transcribe(tmpWavPath)
+                    fs.unlink(tmpWavPath, () => {})
+
+                    if (!transcript || transcript.length < 2) {
+                        await message.reply("I couldn't make out what you said! 🍓")
+                        return
+                    }
+
+                    console.log(`📝 [VOICE MSG] ${authorName} said: "${transcript}"`)
+
+                    const formattedMessage = `[${authorName}] says to you in a voice message: ${transcript}`
+                    const reply      = await ai.chat(formattedMessage)
+                    const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
+
+                    const oggPath = await speak(cleanReply)
+                    await message.reply({
+                        content: `💬 *"${cleanReply}"*`,
+                        files: [{ attachment: oggPath, name: "lily_response.ogg" }]
+                    })
+                    fs.unlink(oggPath, () => {})
+
+                    if (guildPlayers.has(message.guild.id)) {
+                        await playInGuild(message.guild.id, cleanReply)
+                    }
+                } catch (err) {
+                    console.error("Voice message handler error:", err)
+                    await message.reply("Something went wrong processing your voice message, sowwy! 🍓")
+                }
+                return
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         if (!userInput) {
             await message.reply("Yes? 🍓")
@@ -279,13 +369,11 @@ export async function createBot() {
         await message.channel.sendTyping()
 
         try {
-            const reply = await ai.chat(formattedMessage)
+            const reply      = await ai.chat(formattedMessage)
             const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
 
-            // Reply in text always
             await message.reply(cleanReply)
 
-            // Also speak if Lily is in a voice channel in this guild
             if (guildPlayers.has(message.guild.id)) {
                 await playInGuild(message.guild.id, cleanReply)
             }
