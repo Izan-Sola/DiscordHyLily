@@ -34,7 +34,7 @@ export async function transcribe(audioPath) {
     const { stdout } = await execAsync(
         `${PYTHON_BIN} -c "
 from faster_whisper import WhisperModel
-model = WhisperModel('tiny', device='cuda', compute_type='int8')
+model = WhisperModel('base', device='cuda', compute_type='int8')
 segments, _ = model.transcribe('${audioPath}')
 print(' '.join(s.text for s in segments).strip())
 "`
