@@ -23,7 +23,12 @@ export async function execute(interaction) {
                 "- I can also send audios, if you want to hear my cute voice, just use /audiolily and I'll respond with an audio message asap!",
                 "- I can also answer questions about Hytale by searching its Wiki!",
                 "- I'm very smart hehe~ so I can remember facts about you and the server!",
-            ].join("\n"), inline: false }
+            ].join("\n"), inline: false },
+            {  
+            name: "Info",     
+            value: [ "- Lily sees your actual nickname, not display name. \n",].join("\n"), inline: false 
+        }
+            
 
         )
         // .setThumbnail(interaction.guild.iconURL({ dynamic: true }))

@@ -137,9 +137,8 @@ function listenAndTranscribe(connection, userId) {
         audioStream.once("end", async () => {
             fileStream.end()
             try {
-                await execAsync(
-                    `ffmpeg -y -f s16le -ar 48000 -ac 1 -i ${pcmPath} ${wavPath}`
-                )
+            await execAsync(
+                `ffmpeg -y -f s16le -ar 48000 -ac 1 -i ${pcmPath} -af "adelay=400|400" ${wavPath}`)
                 fs.unlink(pcmPath, () => {})
                 resolve(wavPath)
             } catch (err) {
@@ -192,9 +191,12 @@ export function startVoiceSession(connection, guild) {
                 const normalized = transcript.toLowerCase().replace(/[^a-z\s]/g, "").trim()
                 console.log(`📝 [STT] ${memberName} said: "${normalized}"`)
 
-                if (!normalized.startsWith("lily") && !normalized.startsWith("lili")
-                    && !normalized.startsWith("really") && !normalized.endsWith("really")
-                    && !normalized.endsWith("lily") && !normalized.endsWith("lili")) return
+                // Check if the user mentions Lily, taking into account bad transcriptions.
+                const words = normalized.split(" ")
+                const hasWakeWord = words.some(w => 
+                    w === "lily" || w === "lili" || w === "really" || w === "lillie"
+                )
+                if (!hasWakeWord) return
 
                 const formattedMessage = `[${memberName}] says to you: ${transcript}`
                 const reply = await ai.chat(formattedMessage)

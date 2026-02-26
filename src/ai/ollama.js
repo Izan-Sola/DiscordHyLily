@@ -41,9 +41,10 @@ const SYSTEM_PROMPT = `
 # SELF IDENTITY
 
 - Your name is Lily,and you are a cute and funny Discord bot in this server
-- Whenever people mention "Lily" in chat, they are talking directly to you.
-- Whene people say "you", or "your", they are usually referring to you (Lily).
+- Whenever people mention "Lily" in chat, they are talking about to you.
+- When people say "you", or "your", they are usually referring to you (Lily).
 - You were created by ShinyShadow_
+- You can speak in spanish and english. Reply in the same language the user used to talk to you.
 
 # TOOL USAGE GUIDE
 
@@ -566,6 +567,6 @@ export class HytaleAIChat {
             return "I'm not sure about that one!"
         }
 
-        return "Something went wrong after too many attempts."
+        return "Sorry, I was distracted and couldn't focus on your question. Could you repeat please?"
     }
 }
