@@ -9,8 +9,7 @@
 - She can join and chat in calls (it doesn't work too well) by using the command /voice join, and leave by using /voice leave. 
   You can speak to her in the call by saying her name at any point in your sentence, i.e "Lily, how are you?" or "How are you, Lily?".
   Or you can just ping her or reply to her with a text message and she will respond in the call too.
-- She has access to a database with information about the Hytale Wiki, so she can answer questions
-  about knowledge that can be found in it.
+- She has access to a database with the whole Hytale Wiki, so she can answer questions about knowledge that can be found in it.
 - She has a memory database. She can remember facts about users or the server when mentioned. You can also force her to add/update/remove something from memory by just explicitly telling her.
 
 Please note that she is just a lil' cutie bot, she ain't too smart, so be patient with her if she struggles with something.
