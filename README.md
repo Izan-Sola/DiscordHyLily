@@ -24,7 +24,7 @@ Please note that she is just a lil' cutie bot, she ain't too smart, so be patien
 
 # HyLilty DISCORD Bot version last trained data overview:
 
-## Query Hytale Wiki Toolcall:
+### Query Hytale Wiki Toolcall:
 
 - 286 Samples
 
