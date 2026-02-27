@@ -46,6 +46,6 @@ Please note that she is just a lil' cutie bot, she ain't too smart, so be patien
 
 ## Conversational Samples (Including negative examples):
 
-    - 464 Samples
+- 464 Samples
 
 ## TOTAL DATA SAMPLES: 1407
