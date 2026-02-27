@@ -2,6 +2,16 @@
 
   Discord bot to talk with Lily!
 
+## Stuff used:
+
+- AI model: Qwen 2.5 3B 4b Instruct.
+- Ollama, to host the AI model locally.
+- Unsloth, to fine tune the AI model.
+- StyleTTS2, to clone the custom voice sample and generate her voice replies.
+- Edge-TTS, another option for her to be able to talk, but without a custom voice, way faster and less resource intensive.
+- Faster-Whisper, to transcribe people's voices into text prompts.
+- NodeJS, to make the bot application.
+
 ## Features:
 
 - Ping her or reply to her with a text message and she will reply with a text message.
@@ -22,7 +32,7 @@ Please note that she is just a lil' cutie bot, she ain't too smart, so be patien
 - /audiolily [message]: To make her respond with a voice message.
 
 
-## HyLilty DISCORD Bot version last trained data overview:
+## HyLily Discord Bot version last trained data overview:
 
 ### Query Hytale Wiki Toolcall:
 
