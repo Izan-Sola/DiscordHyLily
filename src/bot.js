@@ -42,7 +42,7 @@ print(' '.join(s.text for s in segments).strip())
     return stdout.trim()
 }
 
-function cleanForTTS(text) {
+function sanitizeInput(text) {
     return text
         .replace(/[:;=8][\-o\*\']?[\)\]\(\[dDpP\/\:\}\{@\|\\]/gi, "")
         .replace(/[\)\]\(\[dDpP\/\:\}\{@\|\\][\-o\*\']?[:;=8]/gi, "")
@@ -59,7 +59,7 @@ function cleanForTTS(text) {
 }
 
 export async function speak(text) {
-    const clean   = cleanForTTS(text)
+    const clean   = sanitizeInput(text)
     const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
     const wavPath = "/tmp/lily_response.wav"
     const oggPath = "/tmp/lily_response.ogg"
@@ -71,7 +71,7 @@ export async function speak(text) {
     return oggPath
 }
 // export async function speak(text) {
-//     const clean   = cleanForTTS(text)
+//     const clean   = sanitizeInput(text)
 //     const escaped = clean.replace(/"/g, '\\"')
 //     const id      = Date.now()
 //     const wavPath = `/tmp/lily_response_${id}.wav`
@@ -149,7 +149,7 @@ function listenAndTranscribe(connection, userId) {
     })
 }
 
-// ─── Voice session (exported for use in slash commands) ───────────────────────
+// ─── Voice session ───────────────────────
 
 export function startVoiceSession(connection, guild) {
     const player = createAudioPlayer()
@@ -160,7 +160,7 @@ export function startVoiceSession(connection, guild) {
     const processingUsers = new Set()
     const speakingTimers  = new Map()  // debounce timers per user
 
-    connection.receiver.speaking.on("start", (userId) => {
+    connection.receiver.speaking.on("start", async (userId) => {
         const member = guild.members.cache.get(userId)
         if (!member || member.user.bot) return
         if (processingUsers.has(userId)) return
@@ -174,7 +174,7 @@ export function startVoiceSession(connection, guild) {
         const timer = setTimeout(async () => {
             speakingTimers.delete(userId)
 
-            // Check again after debounce — user might have gone silent already
+            // Check again after debounce since user might have gone silent already
             if (processingUsers.has(userId)) return
             processingUsers.add(userId)
 
@@ -206,7 +206,7 @@ export function startVoiceSession(connection, guild) {
             } finally {
                 processingUsers.delete(userId)
             }
-        }, 300)  // wait 300ms of continuous speaking before starting pipeline
+        }, 150)  // wait 150ms of continuous speaking before starting pipeline
 
         speakingTimers.set(userId, timer)
     })
@@ -261,14 +261,29 @@ export async function createBot() {
     })
 
  client.on("messageCreate", async message => {
-        if (message.author.bot) return
 
-        const isMentioned  = message.mentions.has(client.user)
+        let authorName = ""
+
+        if (message.author.bot) {
+            if(message.author.displayName == "Coolade") {
+            //    if (message.content.includes("_RottenPotato_") || message.content.includes("RottenPotato")) return
+                const match = message.content.match(/](.*)»/m);
+                if (match && match[1]) {
+                    authorName = sanitizeInput(match[1].trim())
+                }
+            } else return
+            
+        } else {
+            authorName = sanitizeInput(message.author.username) || message.member.displayName
+        }
+        // if ( authorName == "rottenpotato001") return
+
+        const isMentioned  = message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")
         const isReplyToBot = message.reference?.messageId
             ? (await message.channel.messages.fetch(message.reference.messageId).catch(() => null))?.author?.id === client.user.id
             : false
 
-        const authorName = message.author.username || message.member?.displayName
+     
         const userInput  = message.content
             .replace(`<@${client.user.id}>`, "")
             .replace(`<@!${client.user.id}>`, "")

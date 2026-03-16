@@ -18,20 +18,19 @@ export async function initLogChannel(client) {
     if (!logChannel) console.warn("⚠️ [LOGS] No HyLily-livechat-logs channel found — logging to terminal only")
 }
 
+function formatForChannel(message) {
+    const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
+    return `\`\`\`\n${truncated}\n\`\`\``
+}
+
 function log(message) {
     console.log(message)
-    if (logChannel) {
-        const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
-        logChannel.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => {})
-    }
+    logChannel?.send(formatForChannel(message)).catch(() => {})
 }
 
 function logError(message) {
     console.error(message)
-    if (logChannel) {
-        const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
-        logChannel.send(`\`\`\`\n❌ ${truncated}\n\`\`\``).catch(() => {})
-    }
+    logChannel?.send(formatForChannel(`❌ ${message}`)).catch(() => {})
 }
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
@@ -40,11 +39,9 @@ const SYSTEM_PROMPT = `
 
 # SELF IDENTITY
 
-- Your name is Lily,and you are a cute and funny Discord bot in this server
+- Your are Lily, and you are a cute and funny Discord bot in this server
 - Whenever people mention "Lily" in chat, they are talking about to you.
 - When people say "you", or "your", they are usually referring to you (Lily).
-- You were created by ShinyShadow_
-- You can speak in spanish and english. Reply in the same language the user used to talk to you.
 
 # TOOL USAGE GUIDE
 
@@ -195,11 +192,11 @@ const TOOL_NAMES = new Set(TOOLS.map(tool => tool.function.name))
 const DEFAULT_OPTIONS = {
     model: "Lily",
     temperature: 0.7,
-    maxReplyTokens: 1024,
-    contextWindow: 4096,
+    maxReplyTokens: 2048,
+    contextWindow: 3048,
     maxHistoryMessages: 24,
     maxToolLoops: 10,
-    memoryDuplicateThreshold: 0.65,
+    memoryDuplicateThreshold: 0.9,
     memoryRemoveThreshold: 0.703,
     memoryRemoveK: 2,
     summarizeEvery: 12,
@@ -220,7 +217,6 @@ export class HytaleAIChat {
         this.conversationHistory = []
         this.userMessageCount = 0
         this.observeBuffer = []
-        // this.writeToolUsedThisTurn = false
     }
 
     // ─── History ─────────────────────────────────────────────────────────────
@@ -252,42 +248,48 @@ export class HytaleAIChat {
     knowledgePost(path, body)   { return axios.post(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
     knowledgePut(path, body)    { return axios.put (`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
 
-    // ─── Conversation summarization ───────────────────────────────────────────
+    // ─── Shared summarization core ────────────────────────────────────────────
 
-    async summarizeConversationAndStore() {
-        const { summarizeLastN, model, ollamaUrl, ollamaTimeout } = this.opts
+    async summarizeAndStore(lines, { logPrefix, maxTokens = 512, memoryPrefix, memorySource = "summary" }) {
+        if (lines.length < 2) return
 
-        const recentTurns = this.conversationHistory
-            .filter(turn => (turn.role === "user" || turn.role === "assistant") && typeof turn.content === "string" && turn.content.trim())
-            .slice(-summarizeLastN)
-
-        if (recentTurns.length < 2) return
-
-        const conversationTranscript = recentTurns
-            .map(turn => `${turn.role === "user" ? "User" : "Lily"}: ${turn.content}`)
-            .join("\n")
-
-        log(`📝 [SUMMARIZE] Summarizing ${recentTurns.length} turns...`)
+        log(`📝 [${logPrefix}] Summarizing ${lines.length} entries...`)
 
         try {
-            const { data: ollamaResponse } = await axios.post(`${ollamaUrl}/api/chat`, {
-                model,
+            const { data } = await axios.post(`${this.opts.ollamaUrl}/api/chat`, {
+                model: this.opts.model,
                 stream: false,
                 messages: [
                     { role: "system", content: SUMMARIZE_PROMPT },
-                    { role: "user",   content: conversationTranscript }
+                    { role: "user",   content: lines.join("\n") }
                 ],
-                options: { temperature: 0.3, num_predict: 512 },
-            }, { timeout: ollamaTimeout })
+                options: { temperature: 0.3, num_predict: maxTokens },
+            }, { timeout: this.opts.ollamaTimeout })
 
-            const summaryText = ollamaResponse.message?.content?.trim()
-            if (!summaryText) return
+            const summary = data.message?.content?.trim()
+            if (!summary) return
 
-            log(`📝 [SUMMARIZE] → "${summaryText.slice(0, 100)}..."`)
-            await this.memoryAdd(`[Conversation summary] ${summaryText}`, "summary")
+            log(`📝 [${logPrefix}] → "${summary.slice(0, 100)}..."`)
+            await this.memoryAdd(`[${memoryPrefix}] ${summary}`, memorySource)
         } catch (err) {
-            logError(`[SUMMARIZE] ${err.message}`)
+            logError(`[${logPrefix}] ${err.message}`)
         }
+    }
+
+    // ─── Conversation summarization ───────────────────────────────────────────
+
+    async summarizeConversationAndStore() {
+        const lines = this.conversationHistory
+            .filter(t => (t.role === "user" || t.role === "assistant") && typeof t.content === "string" && t.content.trim())
+            .slice(-this.opts.summarizeLastN)
+            .map(t => `${t.role === "user" ? "User" : "Lily"}: ${t.content}`)
+
+        await this.summarizeAndStore(lines, {
+            logPrefix: "SUMMARIZE",
+            maxTokens: 512,
+            memoryPrefix: "Conversation summary",
+            memorySource: "summary",
+        })
     }
 
     // ─── Passive observation ──────────────────────────────────────────────────
@@ -301,31 +303,12 @@ export class HytaleAIChat {
         const { observeEvery } = this.opts
         if (observeEvery > 0 && this.observeBuffer.length >= observeEvery) {
             const bufferedMessages = this.observeBuffer.splice(0, observeEvery)
-            this.summarizeObservedAndStore(bufferedMessages)
-        }
-    }
-
-    async summarizeObservedAndStore(bufferedMessages) {
-        const observedTranscript = bufferedMessages.join("\n")
-        log(`👁️ [OBSERVE] Summarizing ${bufferedMessages.length} observed messages...`)
-        try {
-            const { data: ollamaResponse } = await axios.post(`${this.opts.ollamaUrl}/api/chat`, {
-                model: this.opts.model,
-                stream: false,
-                messages: [
-                    { role: "system", content: SUMMARIZE_PROMPT },
-                    { role: "user",   content: observedTranscript }
-                ],
-                options: { temperature: 0.3, num_predict: 200 },
-            }, { timeout: this.opts.ollamaTimeout })
-
-            const summaryText = ollamaResponse.message?.content?.trim()
-            if (!summaryText) return
-
-            log(`👁️ [OBSERVE] → "${summaryText.slice(0, 100)}..."`)
-            await this.memoryAdd(`[Observed chat summary] ${summaryText}`, "observe")
-        } catch (err) {
-            logError(`[OBSERVE] ${err.message}`)
+            this.summarizeAndStore(bufferedMessages, {
+                logPrefix: "OBSERVE",
+                maxTokens: 200,
+                memoryPrefix: "Observed chat summary",
+                memorySource: "observe",
+            })
         }
     }
 
@@ -412,7 +395,6 @@ export class HytaleAIChat {
     }
 
     runTool(toolName, toolArgs) {
-
         switch (toolName) {
             case "query_hytale_wiki":      return this.wikiSearch(toolArgs.query ?? "")
             case "query_memory_database":  return this.memoryQuery(toolArgs.query ?? "")
@@ -532,7 +514,6 @@ export class HytaleAIChat {
             if (messageContent.includes("<tool_call>")) {
                 const embeddedToolCalls = this.parseEmbeddedToolCalls(messageContent)
                 if (embeddedToolCalls.length) {
-                    // log(`🔧 [EMBEDDED] ${embeddedToolCalls.map(tc => tc.name).join(", ")}`)
                     this.conversationHistory.push({ role: "assistant", content: messageContent })
                     const toolResults = await Promise.all(embeddedToolCalls.map(tc => this.runTool(tc.name, tc.args)))
                     const combinedToolResults = toolResults
