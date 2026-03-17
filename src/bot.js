@@ -260,13 +260,13 @@ export async function createBot() {
         }
     })
 
- client.on("messageCreate", async message => {
+client.on("messageCreate", async message => {
 
         let authorName = ""
 
         if (message.author.bot) {
             if(message.author.displayName == "Coolade") {
-            //    if (message.content.includes("_RottenPotato_") || message.content.includes("RottenPotato")) return
+                if (message.content.includes("pikarohan")) return
                 const match = message.content.match(/](.*)»/m);
                 if (match && match[1]) {
                     authorName = sanitizeInput(match[1].trim())
@@ -276,21 +276,39 @@ export async function createBot() {
         } else {
             authorName = sanitizeInput(message.author.username) || message.member.displayName
         }
-        // if ( authorName == "rottenpotato001") return
+        if ( authorName == "pikarohan") return
 
-        const isMentioned  = message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")
+        const channelId   = message.channel.id
+        const isMentioned = message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")
         const isReplyToBot = message.reference?.messageId
             ? (await message.channel.messages.fetch(message.reference.messageId).catch(() => null))?.author?.id === client.user.id
             : false
 
-     
-        const userInput  = message.content
+        const userInput = message.content
             .replace(`<@${client.user.id}>`, "")
             .replace(`<@!${client.user.id}>`, "")
             .trim()
 
         if (!isMentioned && !isReplyToBot) {
             ai.observe(`${authorName} said ${userInput}`)
+
+            if (Math.random() < 0.10) {
+                try {
+                    await message.channel.sendTyping()
+                    const reply = await ai.buttIn(channelId, `${authorName} said: ${userInput}`)
+                    if (reply) {
+                        const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
+                        await message.reply(cleanReply)
+
+                        if (guildPlayers.has(message.guild.id)) {
+                            await playInGuild(message.guild.id, cleanReply)
+                        }
+                    }
+                } catch (err) {
+                    console.error("Butt in handler error:", err)
+                }
+            }
+
             return
         }
 
@@ -326,7 +344,7 @@ export async function createBot() {
                     console.log(`📝 [VOICE MSG] ${authorName} said: "${transcript}"`)
 
                     const formattedMessage = `[${authorName}] says to you in a voice message: ${transcript}`
-                    const reply      = await ai.chat(formattedMessage)
+                    const reply      = await ai.chat(channelId, formattedMessage)
                     const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
 
                     const oggPath = await speak(cleanReply)
@@ -386,7 +404,7 @@ export async function createBot() {
         await message.channel.sendTyping()
 
         try {
-            const reply      = await ai.chat(formattedMessage)
+            const reply      = await ai.chat(channelId, formattedMessage)
             const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
 
             await message.reply(cleanReply)

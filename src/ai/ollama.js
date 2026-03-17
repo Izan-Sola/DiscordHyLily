@@ -39,8 +39,8 @@ const SYSTEM_PROMPT = `
 
 # SELF IDENTITY
 
-- Your are Lily, and you are a cute and funny Discord bot in this server
-- Whenever people mention "Lily" in chat, they are talking about to you.
+- Your are HyLily, and you are a cute and funny Discord bot in this server
+- Whenever people mention "Lily" or "Hylily" in chat, they are talking about to you.
 - When people say "you", or "your", they are usually referring to you (Lily).
 
 # TOOL USAGE GUIDE
@@ -80,6 +80,7 @@ const SYSTEM_PROMPT = `
 - When you want to update or remove a memory entry but you're not sure if it exists, it's better to just try to update/remove it anyway since the tools will handle the case where the entry doesn't exist.
 - Do NOT mention in your reply that you are storing, updating, or removing something from memory, just reply naturally.
 - Always use multiple words for the query when using the memory tools, single-word queries are not effective and will likely lead to irrelevant results.
+- Never mention the actions you perform with the tools. Never say you saved, removed or updated something. Just use the tool and reply naturally.
 
 # TOOL CALL FORMAT REFERENCE
 
@@ -191,10 +192,10 @@ const TOOL_NAMES = new Set(TOOLS.map(tool => tool.function.name))
 
 const DEFAULT_OPTIONS = {
     model: "Lily",
-    temperature: 0.7,
+    temperature: 1,
     maxReplyTokens: 2048,
-    contextWindow: 3048,
-    maxHistoryMessages: 24,
+    contextWindow: 4096,
+    maxChannelMessages: 10,
     maxToolLoops: 10,
     memoryDuplicateThreshold: 0.9,
     memoryRemoveThreshold: 0.703,
@@ -214,20 +215,39 @@ const DEFAULT_OPTIONS = {
 export class HytaleAIChat {
     constructor(options = {}) {
         this.opts = { ...DEFAULT_OPTIONS, ...options }
-        this.conversationHistory = []
+        this.channelHistories = new Map()   
         this.userMessageCount = 0
         this.observeBuffer = []
     }
 
-    // ─── History ─────────────────────────────────────────────────────────────
+    // ─── Per-channel history ──────────────────────────────────────────────────
 
-    buildMessagesForOllama() {
-        const { maxHistoryMessages } = this.opts
-        const recentHistory = this.conversationHistory.length > maxHistoryMessages
-            ? this.conversationHistory.slice(-maxHistoryMessages)
-            : this.conversationHistory
-        return [{ role: "system", content: SYSTEM_PROMPT }, ...recentHistory]
+    getChannelHistory(channelId) {
+        if (!this.channelHistories.has(channelId)) {
+            this.channelHistories.set(channelId, [])
+        }
+        return this.channelHistories.get(channelId)
     }
+
+    pushToChannelHistory(channelId, ...messages) {
+        const history = this.getChannelHistory(channelId)
+        history.push(...messages)
+
+        // Keep only the last maxChannelMessages entries
+        const { maxChannelMessages } = this.opts
+        if (history.length > maxChannelMessages) {
+            history.splice(0, history.length - maxChannelMessages)
+        }
+    }
+
+buildMessagesForOllama(channelId) {
+    const history = this.getChannelHistory(channelId)
+    return [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...(history.length > 0 ? [{ role: "system", content: "The following is the recent conversation history in this channel:" }] : []),
+        ...history
+    ]
+}
 
     // ─── Input sanitization ───────────────────────────────────────────────────
 
@@ -278,8 +298,9 @@ export class HytaleAIChat {
 
     // ─── Conversation summarization ───────────────────────────────────────────
 
-    async summarizeConversationAndStore() {
-        const lines = this.conversationHistory
+    async summarizeConversationAndStore(channelId) {
+        const history = this.getChannelHistory(channelId)
+        const lines = history
             .filter(t => (t.role === "user" || t.role === "assistant") && typeof t.content === "string" && t.content.trim())
             .slice(-this.opts.summarizeLastN)
             .map(t => `${t.role === "user" ? "User" : "Lily"}: ${t.content}`)
@@ -477,22 +498,13 @@ export class HytaleAIChat {
         return args
     }
 
-    // ─── Main chat loop ───────────────────────────────────────────────────────
+    // ─── Shared tool loop (used by both chat and buttIn) ──────────────────────
 
-    async chat(userInput) {
-        const cleanedInput = this.sanitizeInput(userInput)
-        log(`\n💬 [USER PROMPT] ${cleanedInput}`)
-        this.conversationHistory.push({ role: "user", content: cleanedInput })
-
-        const { summarizeEvery } = this.opts
-        if (summarizeEvery > 0 && ++this.userMessageCount % summarizeEvery === 0) {
-            this.summarizeConversationAndStore()
-        }
-
+    async runToolLoop(channelId, cleanedInput) {
         for (let loopCount = 0; loopCount < this.opts.maxToolLoops; loopCount++) {
             log(`🔄 [LOOP ${loopCount + 1}]`)
 
-            const ollamaMessage = await this.sendToOllama(this.buildMessagesForOllama())
+            const ollamaMessage = await this.sendToOllama(this.buildMessagesForOllama(channelId))
             if (!ollamaMessage) return "I'm having trouble thinking right now, sorry!"
 
             const messageContent = (ollamaMessage.content ?? "").trim()
@@ -500,12 +512,12 @@ export class HytaleAIChat {
             // ── Native tool calls ──
             if (ollamaMessage.tool_calls?.length) {
                 log(`🔧 [NATIVE] ${ollamaMessage.tool_calls.map(tc => tc.function.name).join(", ")}`)
-                this.conversationHistory.push(ollamaMessage)
+                this.pushToChannelHistory(channelId, ollamaMessage)
                 for (const toolCall of ollamaMessage.tool_calls) {
                     let parsedArgs = {}
                     try { parsedArgs = JSON.parse(toolCall.function.arguments ?? "{}") } catch {}
                     const toolResult = await this.runTool(toolCall.function.name, parsedArgs)
-                    this.conversationHistory.push({ role: "tool", tool_call_id: toolCall.id, content: toolResult })
+                    this.pushToChannelHistory(channelId, { role: "tool", tool_call_id: toolCall.id, content: toolResult })
                 }
                 continue
             }
@@ -514,12 +526,12 @@ export class HytaleAIChat {
             if (messageContent.includes("<tool_call>")) {
                 const embeddedToolCalls = this.parseEmbeddedToolCalls(messageContent)
                 if (embeddedToolCalls.length) {
-                    this.conversationHistory.push({ role: "assistant", content: messageContent })
+                    this.pushToChannelHistory(channelId, { role: "assistant", content: messageContent })
                     const toolResults = await Promise.all(embeddedToolCalls.map(tc => this.runTool(tc.name, tc.args)))
                     const combinedToolResults = toolResults
                         .map((result, index) => `[${embeddedToolCalls[index].name} result]\n${result}`)
                         .join("\n\n")
-                    this.conversationHistory.push({ role: "user", content: `<tool_response>\n${combinedToolResults}\n</tool_response>` })
+                    this.pushToChannelHistory(channelId, { role: "user", content: `<tool_response>\n${combinedToolResults}\n</tool_response>` })
                     continue
                 }
             }
@@ -527,9 +539,10 @@ export class HytaleAIChat {
             // ── Narration guard ──
             if ([...TOOL_NAMES].some(toolName => messageContent.includes(toolName))) {
                 log(`⚠️ [NARRATE] Model described a tool instead of calling it — retrying`)
-                const lastUserMessageIndex = this.conversationHistory.findLastIndex(turn => turn.role === "user")
+                const history = this.getChannelHistory(channelId)
+                const lastUserMessageIndex = history.findLastIndex(turn => turn.role === "user")
                 if (lastUserMessageIndex !== -1) {
-                    this.conversationHistory[lastUserMessageIndex] = {
+                    history[lastUserMessageIndex] = {
                         role: "user",
                         content: `[System: Do NOT write tool names in your reply. Emit a <tool_call> block instead.]\n\n${cleanedInput}`
                     }
@@ -539,7 +552,7 @@ export class HytaleAIChat {
 
             // ── Real reply ──
             if (messageContent && messageContent.toLowerCase() !== "none") {
-                this.conversationHistory.push(ollamaMessage)
+                this.pushToChannelHistory(channelId, ollamaMessage)
                 log(`✅ [LILY REPLY] ${messageContent}`)
                 return messageContent
             }
@@ -549,5 +562,39 @@ export class HytaleAIChat {
         }
 
         return "Sorry, I was distracted and couldn't focus on your question. Could you repeat please?"
+    }
+
+    // ─── Spontaneous reply (butts in randomly on regular chat) ───────────────
+
+    async buttIn(channelId, rawMessage) {
+        const cleanedInput = this.sanitizeInput(rawMessage)
+        if (!cleanedInput) return null
+
+        log(`💬 [BUTT IN] Lily spontaneously responding to: "${cleanedInput}"`)
+
+        this.pushToChannelHistory(channelId, { role: "user", content: cleanedInput })
+
+        const { summarizeEvery } = this.opts
+        if (summarizeEvery > 0 && ++this.userMessageCount % summarizeEvery === 0) {
+            this.summarizeConversationAndStore(channelId)
+        }
+
+        return this.runToolLoop(channelId, cleanedInput)
+    }
+
+    // ─── Main chat ────────────────────────────────────────────────────────────
+
+    async chat(channelId, userInput) {
+        const cleanedInput = this.sanitizeInput(userInput)
+        log(`\n💬 [USER PROMPT] ${cleanedInput}`)
+
+        this.pushToChannelHistory(channelId, { role: "user", content: cleanedInput })
+
+        const { summarizeEvery } = this.opts
+        if (summarizeEvery > 0 && ++this.userMessageCount % summarizeEvery === 0) {
+            this.summarizeConversationAndStore(channelId)
+        }
+
+        return this.runToolLoop(channelId, cleanedInput)
     }
 }
