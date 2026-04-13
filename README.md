@@ -5,6 +5,7 @@
 ## Stuff used:
 
 - AI model: Qwen 2.5 3B 4b Instruct.
+- GPU: GTX 1660 Super 6GB
 - Ollama, to host the AI model locally.
 - Unsloth, to fine tune the AI model.
 - StyleTTS2, to clone the custom voice sample and generate her voice replies.
