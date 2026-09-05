@@ -207,7 +207,7 @@
       
     - **"wait"**: Sleep for the duration of the action. Blocking.
       
-    - **"look:\<dir>:<deg>"**: Offsets look direction. Blocking.
+    - **"look:\<dir>:\<deg>"**: Offsets look direction. Blocking.
       
     - **"stop"**: Stops movement for the duration of the action. Blocking.
 
