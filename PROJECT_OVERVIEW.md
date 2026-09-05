@@ -191,11 +191,11 @@
   - **"bindsRequired"**: For combos only, is an array containig all the abilities required for the AI to have binded to execute the combo.
   - **"actions"**: It is the list of actions that need to be executed to perform the ability or combo, with a concrete format:
 
-    - **"swap:slot:<Ability>"**: Swaps to the slot on which that ability is binded. Blocking.
+    - **"swap:slot:\<Ability>"**: Swaps to the slot on which that ability is binded. Blocking.
       
     - **"locklook"**: Locks the look direction of the bot to the current look direction. Non-blocking.
       
-    - **"source:<blocks>:<dist>"**: Finds the nearest valid source block. Non-blocking.
+    - **"source:\<blocks>:<dist>"**: Finds the nearest valid source block. Non-blocking.
       
     - **"click:left|right[:N]"**: Left or right click N times. Blocking per click.
       
@@ -207,7 +207,7 @@
       
     - **"wait"**: Sleep for the duration of the action. Blocking.
       
-    - **"look:<dir>:<deg>"**: Offsets look direction. Blocking.
+    - **"look:\<dir>:<deg>"**: Offsets look direction. Blocking.
       
     - **"stop"**: Stops movement for the duration of the action. Blocking.
 
