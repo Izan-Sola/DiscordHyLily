@@ -86,8 +86,7 @@ export class VTSClient {
             })
         })
     }
-
-    async listHotkeys() {
+ async listHotkeys() {
         const res = await this._send({
             apiName: 'VTubeStudioPublicAPI', apiVersion: '1.0', messageType: 'HotkeysInCurrentModelRequest', data: {}
         })

@@ -9,13 +9,20 @@ class VtubeToolExecutor {
         this.vts = vtsClient
         this.expressionCache = []
         this.lastTrigger = 0
+
+        // Fire-and-forget: if a client was already handed in at
+        // construction time, start warming the cache immediately instead
+        // of waiting for the first triggerExpression() call to do it -
+        // that lazy path only helps *after* the model has already tried
+        // and failed once with an empty/undefined enum.
+        if (this.vts) this.refreshExpressions()
     }
 
-   
     async refreshExpressions() {
         if (!this.vts) return
         try {
             this.expressionCache = await this.vts.listHotkeys()
+            Logger.info(`Cached ${this.expressionCache.length} expressions`, "VTUBE")
         } catch (e) {
             Logger.error(e.message, "VTUBE")
         }
@@ -24,22 +31,24 @@ class VtubeToolExecutor {
     setVtsClient(vtsClient) {
         this.vts = vtsClient
         this.expressionCache = []
+        // Same reasoning as the constructor - refresh the moment we have
+        // a live client, don't wait for a tool call to discover it's empty.
+        this.refreshExpressions()
     }
 
     get toolNames() {
         return VTUBE_TOOL_NAMES
     }
+
     get isEnabled() {
         return !!this.vts && this.expressionCache.length > 0
     }
 
-    get toolNames() {
-        return VTUBE_TOOL_NAMES
-    }
     // Built fresh on every access so the enum always reflects whatever is
-    // currently in expressionCache — no separate static tool-def array to
-    // keep in sync like chat/minecraft tools have, since this one field
-    // (the enum) is the only thing that ever changes.
+    // currently in expressionCache. This only works if something already
+    // populated expressionCache beforehand (see refreshExpressions calls
+    // above) - this getter itself can't await a fetch, it just reads
+    // whatever's already cached.
     get tools() {
         return [{
             type: "function",

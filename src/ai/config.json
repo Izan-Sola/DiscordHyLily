@@ -7,6 +7,7 @@
     "presence_penalty": 1.2,
     "repeat_last_n": 400,
     "max_tokens": 8192,
+
     "maxConvoMessages": 12,
     "maxMinecraftConvoMessages": 14,
     "maxRawMessages": 30,
@@ -14,25 +15,38 @@
     "maxToolRepeats": 2,
     "maxUsesPerTool": 1,
     "maxUsesPerMinecraftAction": 1,
+
     "memoryQueryMinScore": 0.3,
     "memoryRemoveMinScore": 0.70,
     "memoryRemoveK": 2,
+
     "episodicQueryMinScore": 0.40,
     "episodicRemoveMinScore": 0.80,
     "episodicRemoveK": 3,
+
     "summarizeEvery": 20,
     "summarizeLastN": 20,
     "observeEvery": 20,
+
     "ollamaUrl": "http://localhost:11435",
     "memoryDbUrl": "http://localhost:8002",
     "blogUrl": "http://localhost:1234",
+
     "ollamaTimeout": 120000,
     "dbTimeout": 30000,
+
     "trainingTurnWindow": 200000,
+
     "memoryAutoInjectEnabled": true,
     "memoryAutoInjectFactK": 2,
     "memoryAutoInjectFactMinScore": 0.65,
     "memoryAutoInjectEpisodicEnabled": true,
     "memoryAutoInjectEpisodicK": 1,
-    "memoryAutoInjectEpisodicMinScore": 0.65
+    "memoryAutoInjectEpisodicMinScore": 0.65,
+
+    "youtubeChatBatchSize": 2,
+    "youtubeChatCooldown": 5000,
+
+    "platform": "linux",
+    "ttsOutputDevice": "lily_tts"
 }

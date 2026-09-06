@@ -32,6 +32,8 @@ if (!isDiscordEnabled && !backend && !isVrchatEnabled) {
 let vtsClient = null
 let survivalLoopHandle = null
 let vrchatBotHandle = null
+let ytClient = null
+let ytBuffer = null
 
 async function initializeVTS() {
     if (!vtube) return null
@@ -53,7 +55,40 @@ async function initializeVTS() {
         return null
     }
 }
+async function initializeYoutubeChat() {
+    if (!vtube) return
 
+    try {
+        const { YouTubeLiveChatClient } =
+            await import('./vtubing/youtube/liveClient.js')
+
+        const { YouTubeChatBuffer } =
+            await import('./vtubing/youtube/chatBuffer.js')
+
+        ytBuffer = new YouTubeChatBuffer(ai)
+
+        ytClient = new YouTubeLiveChatClient({
+            onMessage: (author, text) => ytBuffer.push(author, text)
+        })
+
+        await ytClient.start()
+
+        Logger.success('YouTube live chat connected', "YOUTUBE")
+
+    } catch (err) {
+        const status = err.response?.status
+        const data = err.response?.data
+
+        Logger.error(
+            `YouTube chat failed: HTTP ${status ?? 'unknown'} | ` +
+            `${data?.error?.errors?.[0]?.reason ?? 'unknown'} | ` +
+            `${data?.error?.message ?? err.message}`,
+            "YOUTUBE"
+        )
+
+        console.error('[YOUTUBE FULL ERROR]', data)
+    }
+}
 async function startMinecraft() {
     if (backend === 'mineflayer') {
         const { startMinecraftBot } = await import('./minecraft/mineflayer/index.js')
@@ -108,9 +143,13 @@ async function startVrchat() {
     return startVrchatBot({ ai })
 }
 
+
 async function initializeFeatures() {
     vtsClient = await initializeVTS()
-
+    if (vtsClient) ai.setVtsClient(vtsClient)
+    
+    await initializeYoutubeChat() 
+    
     const mcBot = await startMinecraft()
 
     if (mcBot) {
@@ -157,7 +196,9 @@ async function main() {
             if (vtsClient) {
                 await vtsClient.disconnect().catch(() => { })
             }
-
+            if (ytClient) ytClient.stop()
+            if (ytBuffer) ytBuffer.stop()
+            
             if (survivalLoopHandle?._interval) {
                 clearInterval(survivalLoopHandle._interval)
             }
