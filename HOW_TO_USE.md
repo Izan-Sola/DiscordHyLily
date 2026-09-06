@@ -170,7 +170,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 - And preferably disable `Continue`'s own web search tool, since the brain already includes one.
 
-### VRChat WIP guide
+### VRChat
 
 ###### I'm gonna assume you are going to run this on a separate machine and play with the bot, since the program is made for the bot to follow you. Also, note that this is not still connected to the main brain, so no memories are gonna be saved nor she is gonna be able to use other tools like web search or memory queries. Even if I connect it to the main brain in the future, I will leave the separated version up. So, this does not need the main brain to be running to work, despite the misleading **BRAIN_URL** variable.
 
