@@ -1,8 +1,10 @@
 # My Daughter Lily Brain (WIP) 
 
-### initially supposed to be a hytale bot, but oh well...
+####### initially supposed to be a hytale bot, but oh well...
 
-- Find more info here: https://github.com/Izan-Sola/Lily/PROJECT_OVERVIEW.md
+### So whats the main point of this project? Make a modular brain for a small AI model to do a bunch of stuff.
+
+- Find more info here: [https://github.com/Izan-Sola/Lily/PROJECT_OVERVIEW.md](https://github.com/Izan-Sola/Lily/blob/main/PROJECT_OVERVIEW.md)
 - My daughter's brain, capable of using discord, playing minecraft, talking in vrchat and beating your ahh. (wip)
 - This is the code for her brain, where many functionalities are centralized while trying to keep it clean (discord, minecraft, coding and whatever I add in the future that is possible to centralize).
 - Related: https://github.com/Izan-Sola/Lily-Minecraft , https://github.com/Izan-Sola/LilyBlog , https://github.com/Izan-Sola/LilyGnomeWidget , https://github.com/Izan-Sola/LilyVrchat
