@@ -290,7 +290,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
       {
        "providers": {
          "llama-swap": {
-           "baseUrl": "url-to-brain/v1/chat/completions",
+           "baseUrl": "url-to-bridge:3100/v1/chat/completions",
            "api": "openai-completions",
            "apiKey": "not-required",
            "models": [
