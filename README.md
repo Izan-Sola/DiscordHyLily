@@ -1,6 +1,6 @@
 # My Daughter Lily Brain (WIP) 
 
-####### initially supposed to be a hytale bot, but oh well...
+###### initially supposed to be a hytale bot, but oh well...
 
 ### So whats the main point of this project? Make a modular brain for a small AI model to do a bunch of stuff.
 
