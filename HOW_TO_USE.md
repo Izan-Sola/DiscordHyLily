@@ -176,7 +176,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 * If you have been linked here directly, you may also want to check this: [Prerequisites](#prerequisites). And remember to change the prompts in `bot/prompts.js`
   
-* You are gonna need to download and run this: https://github.com/Izan-Sola/LilyVrchat on the machine where your bot's game is gonna be running. Start it by running: `node index.js` and `node vrchatBridge.js`. For testing that the custom OSC parameters are working, you can use `node osc-test.js`, walk near your bot and check if the console logs anything.
+* If you want to run this separately (not connected to the main brain) downlaod this: https://github.com/Izan-Sola/LilyVrchat on the machine where your bot's game is gonna be running. Start it by running: `node index.js` and `node vrchatBridge.js`. For testing that the custom OSC parameters are working, you can use `node osc-test.js`, walk near your bot and check if the console logs anything. If you are gonna run it connected to the main brain, just run it with the `vrchat` flag.
 
 * This thingy exposes a website in port 3030 as an alternative for talking to her through there via text (she will still respond in game), with an option to append a screenshot of what she sees. This is not necessary, but if you wanted to make it publicly accesible, then you would need to register a sub-domain with DuckDNS and reverse proxy.
 
@@ -199,7 +199,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 * You will also need to change a bunch of the values in ```config.json```:
 
-  * **BRAIN_URL**: URL to wherever llama-server is running, I.E: http://192.168.3.24:11435/v1/chat/completions
+  * **BRAIN_URL**: URL to wherever llama-server, for the standalone version, I.E: http://192.168.3.24:11435/v1/chat/completions
   * **WHISPER_SIDECAR_URL**: URL to wherever `faster-whisper` is running, I.E: http://192.168.3.24:8775/transcribe
   * **VOICE_WAKE_WORD**: A list of words that will trigger a reply from your AI, probably its name. I recommend to add some mispronunciations and to check what the transcription often confuses its name for, to add it to the list, just to be safe.
   * **TTS_ENGINE**: "edge-tts" for, well, `edge-tts`. Or `xtts` to use your custom voice. `StyleTTS2` is too slow for live talk, so you are gonna need to download `xtts` and, again, assuming you are gonna run it on a different machine, you
