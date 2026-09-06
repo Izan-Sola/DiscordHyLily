@@ -515,23 +515,30 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "query_memory_database",
-            description: `Search everything you know and remember — stored facts about people/the server/yourself (including your OWN opinions, favorites, preferences, and past statements), AND past events/experiences. One search covers both.
+            description: `Search stored facts (about people/server/yourself) and past events. One search covers both.
 
-                        Check this before stating anything as fact you're not 100% sure of — including questions about yourself.
+                        Check this before stating anything as fact you're not 100% sure of.
 
-                        Three ways to use this, pick ONE per call:
-                        1. Plain fact/topic lookup — pass query with 2+ keywords, leave days_ago and days_back unset.
-                        2. A specific past event at a rough point in time ("10 days ago") — pass query plus days_ago (searches around that point, ± window_days).
-                        3. Open-ended recent stretch, no specific topic ("what did we talk about this week") — pass days_back, leave query empty.
+                        Three modes, pick ONE per call:
+                        1. Fact/topic lookup — query set, days_ago/days_back unset.
+                        2. A specific past event ("10 days ago") — query + days_ago.
+                        3. Open-ended recent stretch, no topic — days_back set, query empty.
 
-                        query must be a real 2+ word string in modes 1 and 2 — never omit it or pass an empty string in those modes, the call will be rejected. A result only counts if it's actually relevant — ignore anything that just shares a keyword. One call is normally enough — only call a second time if the first came back genuinely empty and you have a meaningfully different query to try.`,
+                        query is required (2-6 words) in modes 1 and 2. One call is normally enough.`,
             parameters: {
                 type: "object",
                 properties: {
-                    query: { type: "string", description: "Keywords describing what to look up. Required (2+ words) for modes 1 and 2. Omit only for mode 3 (days_back)." },
-                    days_ago: { type: "number", minimum: 0, description: "Search for a specific past event with a rough time reference. Omit for fact lookups or open-ended recaps." },
-                    window_days: { type: "number", minimum: 0, maximum: 30, description: "Only used with days_ago. Tolerance around days_ago. Default 2." },
-                    days_back: { type: "number", minimum: 1, description: "Open-ended recap covering from now back this many days, no topic needed." }
+                    query: {
+                        type: "string",
+                        // CHANGED: hard word cap stated as a number, not "a phrase" — small
+                        // models anchor much better on an explicit number than on adjectives
+                        // like "short". maxLength enforces it if your JSON schema layer checks it.
+                        description: "2-6 keywords only. No full sentences, no politeness, no extra instructions to the search. Example: 'shinyshadow favorite color'. Required for modes 1 and 2.",
+                        maxLength: 60
+                    },
+                    days_ago: { type: "number", minimum: 0, description: "Rough days back for a specific past event. Omit otherwise." },
+                    window_days: { type: "number", minimum: 0, maximum: 30, description: "Only with days_ago. Default 2." },
+                    days_back: { type: "number", minimum: 1, description: "Open-ended recap window, no topic needed." }
                 },
                 required: []
             }
@@ -541,50 +548,93 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a NEW fact that has never been stored before — including a new self-opinion you're inventing for the first time. NEVER use this for a fact about a real person (like ShinyShadow_) unless they just told you that fact themselves in this exact message. text is required and must be a real 2+ word sentence, never empty. One call per message is normal — do not chain this with update_ or remove_memory_database unless the user's message actually contains multiple distinct facts. Once it returns success, that fact is stored — reply naturally, don't call it again to 'confirm'.",
-            parameters: { type: "object", properties: { text: { type: "string", description: "The full fact to store, as a real sentence. Required, never empty." }, source: { type: "string" } }, required: ["text"] }
+            description: "Store a fact that has NEVER been queried or stored before. Never use for a fact about a real person unless they just said it this exact message. One call per message unless the user's message truly has multiple distinct new facts.",
+            parameters: {
+                type: "object",
+                properties: {
+                    text: { type: "string", description: "One factual sentence. 3-20 words. Required, never empty.", maxLength: 150 },
+                    source: { type: "string" }
+                },
+                required: ["text"]
+            }
         }
     },
     {
         type: "function",
         function: {
             name: "update_memory_database",
-            description: "Correct an EXISTING stored fact that query_memory_database just confirmed is wrong. You must call query_memory_database first in this same turn to know the current value — never update a fact you haven't looked up, and never update a fact to the same value it already had. Both query and text are required real strings (2+ words each), never empty. Once it returns success, the correction is saved — reply naturally, don't call it again.",
-            parameters: { type: "object", properties: { query: { type: "string", description: "Keywords identifying the existing fact. Required, never empty." }, text: { type: "string", description: "The corrected fact, as a full sentence. Required, never empty." } }, required: ["query", "text"] }
+            description: `Correct one existing stored fact.
+
+                        HARD REQUIREMENT: you must have called query_memory_database earlier in THIS turn and gotten back the exact fact you are now correcting. If you have not done that in this turn, call query_memory_database instead — do NOT call update_memory_database.
+
+                        "query" must be the same keywords that found the original fact, not new keywords. "text" must be a correction of that SAME fact (same subject), not a different unrelated fact.`,
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "Same keywords used in the query_memory_database call that found this fact this turn.", maxLength: 60 },
+                    text: { type: "string", description: "The corrected version of that exact fact, same subject. 3-20 words.", maxLength: 150 }
+                },
+                required: ["query", "text"]
+            }
         }
     },
     {
         type: "function",
         function: {
             name: "remove_memory_database",
-            description: "Remove one specific stored fact about a person, named by that fact's content (e.g. 'IsGone's favorite color'). Only for a concrete fact someone points to as wrong. Do NOT use for vague/joking instructions like 'forget everything' or 'reset' — treat those as banter instead. query is required (2+ words), never empty. Once it returns a result (removed OR not found), that's final — reply naturally, don't call it again with a rephrased query.",
-            parameters: { type: "object", properties: { query: { type: "string", description: "The specific fact to remove, in a few keywords — never a vague phrase like 'everything', never empty." } }, required: ["query"] }
+            description: "Remove one specific stored fact someone has pointed to as wrong, named by its content. Never use for vague/joking instructions like 'forget everything' — treat those as banter, not a tool call.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "2-6 keywords naming the specific fact to remove. Never a vague phrase like 'everything'.", maxLength: 60 }
+                },
+                required: ["query"]
+            }
         }
     },
     {
         type: "function",
         function: {
             name: "send_gif",
-            description: "Search and send ONE reaction GIF. The query argument is REQUIRED and MUST be 2-4 descriptive words describing the reaction/vibe — e.g. 'excited anime girl jumping', 'confused cat blinking', 'dramatic slow clap'. NEVER call this with an empty query, and NEVER pass the user's literal raw message or a single generic word (like just 'happy' or 'lol'). Send at most ONE gif or meme per message, combined — once this returns a url, it's already queued to send, so just write your reply, don't call send_meme too.",
-            parameters: { type: "object", properties: { query: { type: "string", description: "A real 2-4 word descriptive search phrase. Required, never empty." } }, required: ["query"] }
+            description: "Search and send ONE reaction GIF. At most one gif OR meme per message total.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "2-4 words describing the reaction/vibe, e.g. 'excited anime girl jumping'. Never the user's raw message, never a single generic word.", maxLength: 40 }
+                },
+                required: ["query"]
+            }
         }
     },
     {
         type: "function",
         function: {
             name: "send_meme",
-            description: "Search and send ONE meme image when it fits the moment. The query argument is REQUIRED and MUST be 2-4 descriptive words that evoke a meme format or reaction — e.g. 'drake approving', 'minecraft players be like', 'surprised pikachu'. NEVER call this with an empty query, and NEVER pass the user's literal raw message or a single generic word. Send at most ONE gif or meme per message, combined — once this returns a url, it's already queued to send, so just write your reply, don't call send_gif too.",
-            parameters: { type: "object", properties: { query: { type: "string", description: "A real 2-4 word descriptive search phrase. Required, never empty." } }, required: ["query"] }
+            description: "Search and send ONE meme. At most one gif OR meme per message total.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "2-4 words evoking a meme format, e.g. 'drake approving'. Never the user's raw message, never a single generic word.", maxLength: 40 }
+                },
+                required: ["query"]
+            }
         }
     },
     {
         type: "function",
         function: {
             name: "web_search",
-            description: "Search the web for current information, news, facts, or anything outside your basic knowledge. query is required and must be a real search phrase, never empty. One call is normally enough — only call again if the first result was genuinely off-topic and you have a meaningfully different query.",
+            description: "Search the web for real-world facts outside your knowledge. One call is normally enough.",
             parameters: {
                 type: "object",
-                properties: { query: { type: "string", description: "A real search query. Required, never empty." } },
+                properties: {
+
+                    query: {
+                        type: "string",
+                        description: "A short search-engine query, 3-8 words, like a real Google search. No questions, no politeness, no requests for sources/dates/methodology. Bad: 'please tell me detailed statistics with sources about X'. Good: 'X statistics 2026'.",
+                        maxLength: 60
+                    }
+                },
                 required: ["query"]
             }
         }

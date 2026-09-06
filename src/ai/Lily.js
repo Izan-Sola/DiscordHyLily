@@ -317,6 +317,7 @@ export class Lily {
             this.observeParticipants.set(channelId, new Set())
         }
     }
+
     async sendToOllama(messages, foreignTools = [], noTools = false, baseTools = this.tools.tools, overrides = {}) {
         if (getStateController()?.currentStateName === 'DUELING') {
             return { content: "Lily is currently in a duel, she can't reply right now!" }
@@ -335,6 +336,14 @@ export class Lily {
                 repeat_last_n: this.opts.repeat_last_n,
                 max_tokens: overrides.max_tokens ?? this.opts.max_tokens,
                 stop: overrides.stop ?? ["</answer>", "<|user|>", "<|endoftext|>"],
+                // CHANGE 1: this.opts.think was read from config.json but never
+                // put on the payload — it did nothing. Also: Ollama's
+                // /v1/chat/completions endpoint mostly ignores a bare "think"
+                // field for reasoning control; the field it actually reads is
+                // reasoning_effort ("none"/"low"/"medium"/"high"). Sending both
+                // covers you whether your Ollama build honors think or not.
+                reasoning_effort: this.opts.think === false ? "none" : (this.opts.think ?? "none"),
+                think: this.opts.think ?? false,
             }
             if (!noTools) {
                 payload.tools = foreignTools.length ? [...baseTools, ...foreignTools] : baseTools
@@ -342,6 +351,18 @@ export class Lily {
 
             const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, payload, { timeout: this.opts.ollamaTimeout })
             const msg = data.choices?.[0]?.message ?? null
+
+            // CHANGE 2: on some Ollama versions/models, when reasoning is cut
+            // off mid-stream or the model front-loads planning text, everything
+            // ends up in `reasoning`/`reasoning_content` instead of `content` —
+            // content comes back empty even though the model "said" something.
+            // Falling back to that field means a completion never gets treated
+            // as empty when there's actually text sitting right there.
+            if (msg && !msg.content?.trim() && (msg.reasoning_content || msg.reasoning)) {
+                Logger.warning(`content empty, model text landed in reasoning field instead — using it as fallback`, "OLLAMA FALLBACK")
+                msg.content = msg.reasoning_content ?? msg.reasoning
+            }
+
             if (msg?.content) {
                 msg.content = msg.content
                     .replace(/<think>[\s\S]*?<\/think>/g, "")
@@ -355,16 +376,75 @@ export class Lily {
             return null
         }
     }
+    // PATCH for Lily.js — replace parseEmbeddedToolCalls with this version.
+    //
+    // Qwen3.5 was trained with the "qwen3_coder" tool-call format, not the
+    // Hermes-JSON format Qwen3-8B used. That format looks like:
+    //
+    //   <tool_call>
+    //   <function=tool_name>
+    //   <parameter=arg_name>
+    //   value
+    //   </parameter>
+    //   </function>
+    //   </tool_call>
+    //
+    // ...instead of:
+    //
+    //   <tool_call>
+    //   {"name": "tool_name", "arguments": {"arg_name": "value"}}
+    //   </tool_call>
+    //
+    // Native msg.tool_calls (via the `tools` field on the request) will keep
+    // working as before — this only matters for the embedded-text fallback path,
+    // which is exactly where your "MALFORMED" logs were coming from: the model
+    // falling back to its own native dialect instead of the one your regex
+    // expected.
     parseEmbeddedToolCalls(content) {
-        const matches = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
-        return matches.flatMap(match => {
-            try {
-                const parsed = JSON.parse(match[1].trim())
-                let args = parsed.arguments ?? parsed.args ?? {}
-                if (typeof args === "string") try { args = JSON.parse(args) } catch { args = {} }
-                return [{ name: parsed.name, args }]
-            } catch { return [] }
-        })
+        const blocks = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
+        const calls = []
+
+        for (const block of blocks) {
+            const inner = block[1].trim()
+
+            // Dialect 1: old Hermes-JSON format — {"name": ..., "arguments": {...}}
+            if (inner.startsWith("{")) {
+                try {
+                    const parsed = JSON.parse(inner)
+                    let args = parsed.arguments ?? parsed.args ?? {}
+                    if (typeof args === "string") try { args = JSON.parse(args) } catch { args = {} }
+                    calls.push({ name: parsed.name, args })
+                    continue
+                } catch { /* fall through and try XML dialect below, in case of mixed output */ }
+            }
+
+            // Dialect 2: Qwen3.5 native qwen3_coder format —
+            // <function=name><parameter=key>value</parameter>...</function>
+            const fnMatch = inner.match(/<function=([^>]+)>([\s\S]*?)<\/function>/)
+            if (fnMatch) {
+                const name = fnMatch[1].trim()
+                const paramSection = fnMatch[2]
+                const args = {}
+                const paramMatches = [...paramSection.matchAll(/<parameter=([^>]+)>\s*([\s\S]*?)\s*<\/parameter>/g)]
+                for (const p of paramMatches) {
+                    const key = p[1].trim()
+                    let value = p[2].trim()
+                    // Parameters often come through as plain strings even for
+                    // numbers/booleans/objects — try to recover the real type,
+                    // fall back to the raw string if it isn't valid JSON.
+                    try { value = JSON.parse(value) } catch { /* keep as string */ }
+                    args[key] = value
+                }
+                calls.push({ name, args })
+                continue
+            }
+
+            // Neither dialect matched — genuinely malformed/truncated, skip it
+            // silently rather than crashing; caller already treats an empty
+            // calls[] as "malformed" and reprompts.
+        }
+
+        return calls
     }
 
     // Two independent checks gate every non-minecraft_action tool call:

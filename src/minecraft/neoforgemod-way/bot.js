@@ -199,9 +199,14 @@ async function _handleEvent(event) {
                 const aiReply = await aiInstance.chat(
                     "minecraft",
                     `${player}: ${message}`,
-                    buildMinecraftSystemPrompt(getStateController())
+                    buildMinecraftSystemPrompt(getStateController()),
+                    {
+                        temperature: 0.5,
+                        repeat_penalty: 1.0,   // was 1.15 — JSON tool calls are inherently repetitive, don't fight that
+                        presence_penalty: 0,   // was 1.0 — this was almost certainly suppressing { } " : tokens
+                        repeat_last_n: 64      // shrink the penalty window so tool-schema tokens age out fast, if you keep any penalty at all
+                    }
                 )
-
                 const text = aiReply?.text?.trim()
                 const gifUrl = aiReply?.gifUrl
 
