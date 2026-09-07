@@ -7,6 +7,8 @@ import { ToolRouter, ALL_TOOL_NAMES } from './tools/toolRouter.js'
 import { Logger } from '../../src/utils/Logger.js'
 import { saveFlawlessTurn } from './saveFlawlessTurns.js'
 import { getConfig } from './config.js'
+import { speakToStream } from '../vtubing/youtube/streamTTS.js'
+const YOUTUBE_CHANNEL_ID = "youtube"
 // Channel id used for the Minecraft bridge — see getToolsForChannel().
 const MINECRAFT_CHANNEL_ID = "minecraft"
 // Channel id used for the VRChat avatar bridge (vrchatBot/) — see
@@ -84,6 +86,7 @@ export class Lily {
     get opts() {
         return Object.assign(getConfig(), this._optsOverride)
     }
+
 
     getObserveBuffer(channelId) {
         if (!this.observeBuffers.has(channelId)) this.observeBuffers.set(channelId, [])
@@ -197,7 +200,7 @@ export class Lily {
             systemContent += `\n\n${VTUBE_EXPRESSION_ADDENDUM}`
         }
 
-        messages.push({ role: "system", content: systemPromptOverride ?? SYSTEM_PROMPT })
+        messages.push({ role: "system", content: systemContent })
 
         const history = skipHistory ? [] : [...this.getConvoHistory(channelId)]
 
@@ -659,6 +662,8 @@ export class Lily {
                 this.maybeSaveFlawlessTurn(channelId, systemPromptOverride, attemptScratch, content)
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY - BUDGET EXHAUSTED")
+                if (channelId === YOUTUBE_CHANNEL_ID) speakToStream(content).catch(err => Logger.error(`TTS failed: ${err.message}`, "TTS"))
+                return { text: content, gifUrl: pendingGifUrl }
                 return { text: content, gifUrl: pendingGifUrl }
             }
 
@@ -851,6 +856,7 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
                 this.maybeSaveFlawlessTurn(channelId, systemPromptOverride, scratch, content)
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY")
+                if (channelId === YOUTUBE_CHANNEL_ID) speakToStream(content).catch(err => Logger.error(`TTS failed: ${err.message}`, "TTS"))
                 return { text: content, gifUrl: pendingGifUrl }
             }
 

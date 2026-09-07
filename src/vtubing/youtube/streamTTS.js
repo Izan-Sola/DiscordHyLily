@@ -7,9 +7,10 @@ import { sanitizeInput } from '../../ai/utils.js'
 import { getVtubeConfig } from '../../vtubing/vtubeConfig.js'
 
 const execAsync = promisify(exec)
-const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN
+
 
 export async function speakToStream(text) {
+    const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN
     const { platform, ttsOutputDevice } = getVtubeConfig()
     const clean = sanitizeInput(text)
     const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
