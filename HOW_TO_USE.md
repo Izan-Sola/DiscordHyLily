@@ -18,7 +18,7 @@
   * [Neoforge way](#neoforge-way)
   * [Mineflayer way](#mineflayer-way)
 * [VSC integration](#vsc-integration)
-* [VRChat WIP guide](#vrchat-wip-guide)
+* [VRChat](#vrchat)
 
   * [CLI control](#cli-control)
   
