@@ -25,6 +25,7 @@ Logger.info(`  • VTube Studio: ${vtube ? '✅ Enabled' : '❌ Disabled'}`, "ST
 Logger.info(`  • Minecraft: ${backend === 'mineflayer' ? 'Mineflayer' : backend === 'modded' ? 'Modded (NeoForge)' : 'None'}`, "STARTUP")
 Logger.info(`  • VRChat: ${isVrchatEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Continue.dev coding bridge: ${isCodingEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
+Logger.info(`  • Tavily MCP server: ${isCodingEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Pi-dev bridge: ${isPidevEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 
 if (!isDiscordEnabled && !backend && !isVrchatEnabled) {
@@ -38,6 +39,7 @@ let ytClient = null
 let ytBuffer = null
 let continueBridgeHandle = null
 let pidevBridgeHandle = null
+let tavilyServerHandle = null
 
 async function initializeVTS() {
     if (!vtube) return null
@@ -143,6 +145,40 @@ async function startSurvivalLoop(mcSend, mcChat, stateController) {
 // voice listening, and the VRChat auto-join pipeline; all it needs from
 // here is the shared brain. Fully independent of `backend`/`vtube` — the
 // vrchat flag alone is enough to bring it up.
+// Tavily MCP server (tavily-mcp-server.js) — gated behind the 'coding'
+// flag, spawned alongside the Continue bridge. This one is NOT an HTTP
+// bridge like the other two: it's a stdio-based MCP server, run exactly
+// the way you'd run it manually with `node tavily-mcp-server.js`. Spawning
+// it here just saves you starting it by hand every time; Continue's own
+// mcpServers config still needs to point at this same script with its own
+// `command`/`args` the way MCP stdio servers normally work — a stdio
+// server's stdin/stdout has to be owned by whichever process actually
+// talks MCP to it, so this spawned copy and the one Continue launches are
+// independent processes, not a shared instance. NOTE: adjust the path
+// below to wherever you place tavily-mcp-server.js relative to this file.
+async function startTavilyServer() {
+    if (!isCodingEnabled) return null
+    const { spawn } = await import('node:child_process')
+    const child = spawn(process.execPath, ['./src/coding/tavily-mcp-server.js'], {
+        stdio: 'pipe', // or 'inherit'
+        env: process.env,
+    })
+
+    child.on('exit', (code, signal) => {
+        Logger.warning(`Tavily MCP server exited (code ${code}, signal ${signal})`, "TAVILY")
+    })
+    child.on('error', (err) => {
+        Logger.error(`Tavily MCP server failed to spawn: ${err.message}`, "TAVILY")
+    })
+
+    // Log any errors from the child process
+    child.stderr?.on('data', (data) => {
+        Logger.error(`Tavily MCP stderr: ${data.toString()}`, "TAVILY")
+    })
+
+    return child
+}
+
 async function startVrchat() {
     if (!isVrchatEnabled) return null
     const { startVrchatBot } = await import('./vrchatBot/index.js')
@@ -197,6 +233,11 @@ async function initializeFeatures() {
     continueBridgeHandle = await startCodingBridge()
     if (continueBridgeHandle) {
         Logger.success('Continue.dev coding bridge started', "CODING")
+    }
+
+    tavilyServerHandle = await startTavilyServer()
+    if (tavilyServerHandle) {
+        Logger.success('Tavily MCP server started', "TAVILY")
     }
 
     pidevBridgeHandle = await startPidevBridge()
@@ -254,6 +295,10 @@ async function main() {
 
             if (continueBridgeHandle?.close) {
                 await new Promise(resolve => continueBridgeHandle.close(resolve))
+            }
+
+            if (tavilyServerHandle?.kill) {
+                tavilyServerHandle.kill()
             }
 
             if (pidevBridgeHandle?.close) {
