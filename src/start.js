@@ -13,7 +13,7 @@ try {
     process.exit(1)
 }
 
-const { backend, vtube, discord: isDiscordEnabled, vrchat: isVrchatEnabled } = runConfig
+const { backend, vtube, discord: isDiscordEnabled, vrchat: isVrchatEnabled, coding: isCodingEnabled, pidev: isPidevEnabled } = runConfig
 
 if (flags.has('bending') && backend !== 'modded') {
     Logger.warning("'bending' flag has no effect without 'modded' - ignoring", "STARTUP")
@@ -24,6 +24,8 @@ Logger.info(`  • Discord: ${isDiscordEnabled ? '✅ Enabled' : '❌ Disabled'}
 Logger.info(`  • VTube Studio: ${vtube ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Minecraft: ${backend === 'mineflayer' ? 'Mineflayer' : backend === 'modded' ? 'Modded (NeoForge)' : 'None'}`, "STARTUP")
 Logger.info(`  • VRChat: ${isVrchatEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
+Logger.info(`  • Continue.dev coding bridge: ${isCodingEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
+Logger.info(`  • Pi-dev bridge: ${isPidevEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 
 if (!isDiscordEnabled && !backend && !isVrchatEnabled) {
     Logger.warning('No Discord, no Minecraft backend, and no VRChat bridge active - there is nothing for this process to do', "STARTUP")
@@ -34,6 +36,8 @@ let survivalLoopHandle = null
 let vrchatBotHandle = null
 let ytClient = null
 let ytBuffer = null
+let continueBridgeHandle = null
+let pidevBridgeHandle = null
 
 async function initializeVTS() {
     if (!vtube) return null
@@ -145,6 +149,27 @@ async function startVrchat() {
     return startVrchatBot({ ai })
 }
 
+// Continue.dev coding bridge (continue-bridge.js) — gated behind the
+// 'coding' flag. Shares the same `ai` (Lily) instance as every other
+// backend. NOTE: adjust the import path below to wherever you place
+// continue-bridge.js relative to this file.
+async function startCodingBridge() {
+    if (!isCodingEnabled) return null
+    const { startContinueBridge } = await import('./coding/continue-bridge.js')
+    return startContinueBridge(ai)
+}
+
+// Pi coding-assistant bridge (pidev-bridge.js) — gated behind the 'pidev'
+// flag. Deliberately does NOT share `ai`; it spins up its own Lily
+// instance with its own memory lane, same as before. NOTE: adjust the
+// import path below to wherever you place pidev-bridge.js relative to
+// this file.
+async function startPidevBridge() {
+    if (!isPidevEnabled) return null
+    const { startPidevBridge: start } = await import('./pidev-bridge/pidev-bridge.js')
+    return start()
+}
+
 
 async function initializeFeatures() {
     vtsClient = await initializeVTS()
@@ -167,6 +192,16 @@ async function initializeFeatures() {
     vrchatBotHandle = await startVrchat()
     if (vrchatBotHandle) {
         Logger.success('VRChat bridge started', "VRCHAT")
+    }
+
+    continueBridgeHandle = await startCodingBridge()
+    if (continueBridgeHandle) {
+        Logger.success('Continue.dev coding bridge started', "CODING")
+    }
+
+    pidevBridgeHandle = await startPidevBridge()
+    if (pidevBridgeHandle) {
+        Logger.success('Pi-dev bridge started', "PIDEV")
     }
 }
 
@@ -204,7 +239,7 @@ async function main() {
             }
             if (ytClient) ytClient.stop()
             if (ytBuffer) ytBuffer.stop()
-            
+
             if (survivalLoopHandle?._interval) {
                 clearInterval(survivalLoopHandle._interval)
             }
@@ -215,6 +250,14 @@ async function main() {
 
             if (vrchatBotHandle?.stop) {
                 await vrchatBotHandle.stop()
+            }
+
+            if (continueBridgeHandle?.close) {
+                await new Promise(resolve => continueBridgeHandle.close(resolve))
+            }
+
+            if (pidevBridgeHandle?.close) {
+                await new Promise(resolve => pidevBridgeHandle.close(resolve))
             }
 
             if (client) {

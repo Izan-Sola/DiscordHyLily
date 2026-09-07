@@ -1,5 +1,4 @@
-
-const KNOWN_FLAGS = ['discord', 'modded', 'mineflayer', 'bending', 'vtube', 'vrchat']
+const KNOWN_FLAGS = ['discord', 'modded', 'mineflayer', 'bending', 'vtube', 'vrchat', 'coding', 'pidev']
 
 export function parseFlags(argv = process.argv.slice(2)) {
     return new Set(
@@ -37,6 +36,14 @@ export function getConfigFromFlags(flags = parseFlags()) {
         vtube: flags.has('vtube'),
         discord: flags.has('discord'),
         vrchat: flags.has('vrchat'),
+        // Same shape as vrchat above: independent booleans, not Minecraft
+        // backend alternatives, so they never touch the modded/mineflayer
+        // exclusivity check. `coding` brings up the Continue.dev bridge
+        // (continue-bridge.js), `pidev` brings up the Pi coding-assistant
+        // bridge (pidev-bridge.js). Either, both, or neither can run
+        // alongside any other flag combination.
+        coding: flags.has('coding'),
+        pidev: flags.has('pidev'),
     }
 }
 
@@ -48,6 +55,8 @@ export function describeConfig(config) {
     if (config.bending) label += '-bending'
     if (config.vtube) label += '-vtube'
     if (config.vrchat) label += '-vrchat'
+    if (config.coding) label += '-coding'
+    if (config.pidev) label += '-pidev'
     return label
 }
 
@@ -66,6 +75,12 @@ export function isModdedEnabled(flags = parseFlags()) {
 }
 export function isVrchatEnabled(flags = parseFlags()) {
     return flags.has('vrchat')
+}
+export function isCodingEnabled(flags = parseFlags()) {
+    return flags.has('coding')
+}
+export function isPidevEnabled(flags = parseFlags()) {
+    return flags.has('pidev')
 }
 // Tool-config derivation for the survival loop / AI layer - takes the
 // same config object everything else now uses, not a mode string.

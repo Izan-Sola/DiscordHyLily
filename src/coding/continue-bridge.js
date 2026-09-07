@@ -1,11 +1,14 @@
 // continue-bridge.js
+//
+// Started conditionally from start.js when the 'coding' flag is passed —
+// see startContinueBridge() at the bottom. `ai` is no longer imported
+// directly; it's handed in by the caller so this module shares the exact
+// same Lily instance as every other backend (Discord, Minecraft, VRChat)
+// rather than spinning up a second one.
 import express from "express"
 import fs from "fs"
 import { fileURLToPath } from "url"
-import { ai } from "../bot.js"
-
-const app = express()
-app.use(express.json({ limit: "10mb" }))
+import { Logger } from "../utils/Logger.js"
 
 const PORT = process.env.BRAIN_PORT || 8767
 const CHAT_CHANNEL_ID = "vscode-continue-chat"
@@ -220,90 +223,100 @@ function formatResponse(res, { model, stream, text, tool_calls }) {
     }
 }
 
-app.post("/v1/chat/completions", async (req, res) => {
-    const { messages, stream, model, tools } = req.body
-    const isCodeRequest = model?.includes("code")
-    const hasTools = Array.isArray(tools) && tools.length > 0
-    const channelId = isCodeRequest ? CODE_CHANNEL_ID : CHAT_CHANNEL_ID
+// Brings up the Continue.dev bridge on BRAIN_PORT. `ai` is the shared Lily
+// instance (same one Discord/Minecraft/VRChat all use), passed in by
+// start.js rather than imported, so this stays a plain function you can
+// choose to call — no more auto-starting just from importing the file.
+// Returns the http.Server handle so callers can close() it on shutdown.
+export function startContinueBridge(ai) {
+    const app = express()
+    app.use(express.json({ limit: "10mb" }))
 
-    Logger.info("[BRIDGE] model:", model, "| continueTools:", hasTools ? tools.map(t => t.function?.name) : "none")
+    app.post("/v1/chat/completions", async (req, res) => {
+        const { messages, stream, model, tools } = req.body
+        const isCodeRequest = model?.includes("code")
+        const hasTools = Array.isArray(tools) && tools.length > 0
+        const channelId = isCodeRequest ? CODE_CHANNEL_ID : CHAT_CHANNEL_ID
 
-    try {
-        const continueSystemMsgs = messages.filter(m => m.role === "system").map(m => m.content)
-        const continueExtra = continueSystemMsgs.join("\n\n")
+        Logger.info("[BRIDGE] model:", model, "| continueTools:", hasTools ? tools.map(t => t.function?.name) : "none")
 
-        let systemOverride = null
-        if (isCodeRequest) {
-            // Apply role. Intentionally persona-free, and intentionally NOT
-            // dependent on AGENT_SUFFIX being forwarded correctly — the hard
-            // rules live directly in CODE_SYSTEM_PROMPT above. This model
-            // should never receive tools; if it somehow does, we still don't
-            // route it into the tool-use branch below.
-            systemOverride = [CODE_SYSTEM_PROMPT, continueExtra].filter(Boolean).join("\n\n")
-        } else if (hasTools) {
-            // Agent mode: keep Lily's persona as the base, Continue's own
-            // instructions + tool-use guidance ride along as an addendum —
-            // NOT a replacement. This is what keeps her in character while
-            // she has tool access.
-            const editTool = tools.find(t => t.function?.name === "edit_existing_file")
-            if (editTool) Logger.info("[BRIDGE] edit_existing_file schema:", JSON.stringify(editTool.function.parameters, null, 2))
+        try {
+            const continueSystemMsgs = messages.filter(m => m.role === "system").map(m => m.content)
+            const continueExtra = continueSystemMsgs.join("\n\n")
 
-            systemOverride = ai.buildSystemPrompt([continueExtra, AGENT_SUFFIX].filter(Boolean).join("\n\n"))
-        }
-        // else: plain chat, no tools -> systemOverride stays null -> Lily's
-        // normal persona is used as-is via buildMessagesForOllama's default.
+            let systemOverride = null
+            if (isCodeRequest) {
+                // Apply role. Intentionally persona-free, and intentionally NOT
+                // dependent on AGENT_SUFFIX being forwarded correctly — the hard
+                // rules live directly in CODE_SYSTEM_PROMPT above. This model
+                // should never receive tools; if it somehow does, we still don't
+                // route it into the tool-use branch below.
+                systemOverride = [CODE_SYSTEM_PROMPT, continueExtra].filter(Boolean).join("\n\n")
+            } else if (hasTools) {
+                // Agent mode: keep Lily's persona as the base, Continue's own
+                // instructions + tool-use guidance ride along as an addendum —
+                // NOT a replacement. This is what keeps her in character while
+                // she has tool access.
+                const editTool = tools.find(t => t.function?.name === "edit_existing_file")
+                if (editTool) Logger.info("[BRIDGE] edit_existing_file schema:", JSON.stringify(editTool.function.parameters, null, 2))
 
-        // Tool calls that write/edit files need room for a whole file's
-        // content as the argument string — 200 tokens (Lily's normal chat
-        // budget) truncates mid-JSON and the tool call fails to parse.
-        // Apply-role responses also need this, since they return a full
-        // file as plain text. Lower temperature too: high temp makes her
-        // narrate a plausible "I did it" in prose instead of reliably
-        // emitting the tool call (agent mode), or improvise/shrink content
-        // instead of copying it exactly (apply mode).
-        const opts = (hasTools || isCodeRequest) ? { tools, max_tokens: 8000, temperature: 0.15 } : {}
-        const toolResults = extractTrailingToolResults(messages)
+                systemOverride = ai.buildSystemPrompt([continueExtra, AGENT_SUFFIX].filter(Boolean).join("\n\n"))
+            }
+            // else: plain chat, no tools -> systemOverride stays null -> Lily's
+            // normal persona is used as-is via buildMessagesForOllama's default.
 
-        let result
-        if (toolResults.length) {
-            Logger.info("[BRIDGE] resuming after tool result(s):", toolResults.map(t => ({
-                id: t.tool_call_id,
-                content: t.content?.slice(0, 300)
-            })))
-            result = await ai.resumeToolLoop(channelId, toolResults, systemOverride, opts, [])
-        } else {
-            const userText = extractUserText(messages)
-            result = await ai.chat(channelId, userText, systemOverride, opts, [])
-        }
+            // Tool calls that write/edit files need room for a whole file's
+            // content as the argument string — 200 tokens (Lily's normal chat
+            // budget) truncates mid-JSON and the tool call fails to parse.
+            // Apply-role responses also need this, since they return a full
+            // file as plain text. Lower temperature too: high temp makes her
+            // narrate a plausible "I did it" in prose instead of reliably
+            // emitting the tool call (agent mode), or improvise/shrink content
+            // instead of copying it exactly (apply mode).
+            const opts = (hasTools || isCodeRequest) ? { tools, max_tokens: 8000, temperature: 0.15 } : {}
+            const toolResults = extractTrailingToolResults(messages)
 
-        // ── Safety net #1: block bad TOOL-CALL edits before Continue
-        // executes them (agent mode only — see function docblock).
-        if (result?.tool_calls?.length) {
-            for (const tc of result.tool_calls) {
-                const blockReason = checkForCatastrophicOverwrite(tc)
-                if (blockReason) {
-                    formatResponse(res, { model, stream, text: blockReason, tool_calls: undefined })
-                    return
+            let result
+            if (toolResults.length) {
+                Logger.info("[BRIDGE] resuming after tool result(s):", toolResults.map(t => ({
+                    id: t.tool_call_id,
+                    content: t.content?.slice(0, 300)
+                })))
+                result = await ai.resumeToolLoop(channelId, toolResults, systemOverride, opts, [])
+            } else {
+                const userText = extractUserText(messages)
+                result = await ai.chat(channelId, userText, systemOverride, opts, [])
+            }
+
+            // ── Safety net #1: block bad TOOL-CALL edits before Continue
+            // executes them (agent mode only — see function docblock).
+            if (result?.tool_calls?.length) {
+                for (const tc of result.tool_calls) {
+                    const blockReason = checkForCatastrophicOverwrite(tc)
+                    if (blockReason) {
+                        formatResponse(res, { model, stream, text: blockReason, tool_calls: undefined })
+                        return
+                    }
                 }
             }
+
+            // ── Safety net #2 (weaker): apply-role output goes straight to
+            // disk with no tool call to intercept, so this can only warn.
+            if (isCodeRequest && !result?.tool_calls?.length) {
+                warnIfApplyLooksShrunk(messages, result?.text)
+            }
+
+            Logger.info(
+                "[BRIDGE] reply:", result?.text?.slice(0, 200),
+                "| tool_calls:", result?.tool_calls?.map(tc => tc.function?.name)
+            )
+
+            formatResponse(res, { model, stream, text: result?.text, tool_calls: result?.tool_calls })
+        } catch (err) {
+            Logger.error("[BRIDGE] error:", err.response?.data ?? err.message)
+            res.status(500).json({ error: err.message })
         }
+    })
 
-        // ── Safety net #2 (weaker): apply-role output goes straight to
-        // disk with no tool call to intercept, so this can only warn.
-        if (isCodeRequest && !result?.tool_calls?.length) {
-            warnIfApplyLooksShrunk(messages, result?.text)
-        }
-
-        Logger.info(
-            "[BRIDGE] reply:", result?.text?.slice(0, 200),
-            "| tool_calls:", result?.tool_calls?.map(tc => tc.function?.name)
-        )
-
-        formatResponse(res, { model, stream, text: result?.text, tool_calls: result?.tool_calls })
-    } catch (err) {
-        Logger.error("[BRIDGE] error:", err.response?.data ?? err.message)
-        res.status(500).json({ error: err.message })
-    }
-})
-
-app.listen(PORT, () => Logger.info(`🧠 Lily bridge on http://localhost:${PORT}/v1`))
+    return app.listen(PORT, () => Logger.info(`🧠 Lily bridge on http://localhost:${PORT}/v1`))
+}
