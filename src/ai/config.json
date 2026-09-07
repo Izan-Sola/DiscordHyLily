@@ -6,7 +6,7 @@
     "top_k": 35,
     "min_p": 0.1,
     "presence_penalty": 0.1,
-    "repeat_penalty": 1.15,
+    "repeat_penalty": 1.1,
     "repeat_last_n": 256,
     "max_tokens": 512,
     "maxConvoMessages": 12,

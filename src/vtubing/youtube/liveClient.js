@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { Logger } from '../../utils/Logger.js'
-import { getVtubeConfig } from '../../vtube/vtubeConfig.js'
+import { getVtubeConfig } from '../../vtubing/vtubeConfig.js'
 
 const API_BASE = 'https://www.googleapis.com/youtube/v3'
 

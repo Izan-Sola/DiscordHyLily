@@ -1,5 +1,5 @@
 import { Logger } from '../../utils/Logger.js'
-import { getVtubeConfig } from '../../vtube/vtubeConfig.js'
+import { getVtubeConfig } from '../../vtubing/vtubeConfig.js'
 
 // Channel id used for the YouTube live chat ambient commentary — same
 // pattern as MINECRAFT_CHANNEL_ID / VRCHAT_CHANNEL_ID in Lily.js. Keeps

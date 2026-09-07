@@ -4,7 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { sanitizeInput } from '../../ai/utils.js'
-import { getVtubeConfig } from '../../vtube/vtubeConfig.js'
+import { getVtubeConfig } from '../../vtubing/vtubeConfig.js'
 
 const execAsync = promisify(exec)
 const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN

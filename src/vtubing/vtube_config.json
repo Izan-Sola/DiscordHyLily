@@ -3,5 +3,5 @@
     "ttsOutputDevice": "lily_tts",
     "youtubeChatBatchSize": 2,
     "youtubeChatCooldown": 5000,
-    "youtubeMinPollMs": 10000
+    "youtubeMinPollMs": 15000
 }
