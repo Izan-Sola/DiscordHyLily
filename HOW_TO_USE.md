@@ -18,7 +18,7 @@
   * [Neoforge way](#neoforge-way)
   * [Mineflayer way](#mineflayer-way)
 * [VSC integration](#vsc-integration)
-* [VRChat WIP guide](#vrchat-wip-guide)
+* [VRChat](#vrchat)
 
   * [CLI control](#cli-control)
   
@@ -56,7 +56,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - There's a bunch of flags you can combine to enable each functionality. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
 
-- All the available flags are : `modded`, `mineflayer`, `discord`, `bending`, `vrchat` and `vtube`
+- All the available flags are : `modded`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, and `vtube`
 
 All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the flags you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
 
@@ -136,8 +136,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 ### VSC integration
 
-- For this I used the extension called `Continue`. There is 2 things you need to run with `node` in **src/lilycoding**, a bridge so the messages in the `Continue` chat go through the "brain" and a MCP Server for Tavily, for proper image search and url indexation.
-
+- For this I used the extension called `Continue`.
 - You need to edit `Continue`'s config, to look something like this:
 
    ```yaml
@@ -284,8 +283,8 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 ### Pi dev
  
- - You need to run the `pidev-bridge.js` inside **src/pidev-bridge/** with `node pidev-bridge.js`
- - Then edit the `models.json` config of pi-dev to look something like this:
+ - You will need to edit the `models.json` config of pi-dev to look something like this:
+   
     ```json
       {
        "providers": {
