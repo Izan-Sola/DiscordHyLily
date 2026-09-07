@@ -24,7 +24,7 @@ let survivalLoopStarted = false
  * @param {object} opts.ai            your existing ai instance (same one passed into startMinecraftBot before)
  * @param {string} opts.authPassword  password used for /register + /login (AuthMe-style plugins) — falls back to MC_AUTH_PASSWORD env var
  */
-export function startMinecraftBot({ host, port = 25565, username = 'Lily', followTarget, ai, authPassword } = {}) {
+export function startMinecraftBot({ host, port = 25565, username = 'Lily', followTarget, ai, authPassword, runConfig, vtsClient } = {}) {
     aiInstance = ai
 
     bot = mineflayer.createBot({
@@ -37,7 +37,7 @@ export function startMinecraftBot({ host, port = 25565, username = 'Lily', follo
 
     bot.loadPlugin(pathfinder)
 
-    bot.once('spawn', () => {
+    bot.once('spawn', async () => {
         Logger.info(`Spawned on ${host}:${port} as ${username}`, "MC")
 
         // Handle /register + /login before anything else — a lot of servers
@@ -71,9 +71,14 @@ export function startMinecraftBot({ host, port = 25565, username = 'Lily', follo
         })
 
         if (!survivalLoopStarted) {
-            const toolExecutor = { execute: (name, args) => _executeMinecraftTool(name, args) }
-            const survivalTools = buildSurvivalToolDefs()
-            const { triggerTick } = startSurvivalLoop(stateController, toolExecutor, survivalTools)
+            const { triggerTick } = await startSurvivalLoop(
+                stateController,
+                (name, args) => _executeMinecraftTool(name, args),   // mcSend
+                (text) => stateController.mcChat(text),               // mcChat
+                process.env.OLLAMA_URL ?? "http://localhost:11435",   // ollamaUrl (must be a string!)
+                runConfig,                                             // "mode" — actually the runConfig object, used for getToolConfig()
+                vtsClient                                              // may be undefined for mineflayer, that's fine
+            )
             triggerSurvivalTick = triggerTick
             survivalLoopStarted = true
         }

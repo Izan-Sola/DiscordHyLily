@@ -115,13 +115,16 @@ async function startMinecraft() {
 }
 
 async function startSurvivalLoop(mcSend, mcChat, stateController) {
+    let loopFn
     if (isMineflayerEnabled()) {
-        const { startSurvivalLoop } = await import('./minecraft/mineflayer/state-machine/helpers/survivalLoop.js')
+        return null // mineflayer starts its own survival loop internally, see below
     } else if (isModdedEnabled()) {
-        const { startSurvivalLoop } = await import('./minecraft/neoforgemod-way/state-machine/helpers/survivalLoop.js')
-    } else return
-  
-    return startSurvivalLoop(
+        ; ({ startSurvivalLoop: loopFn } = await import('./minecraft/neoforgemod-way/state-machine/helpers/survivalLoop.js'))
+    } else {
+        return null
+    }
+
+    return loopFn(
         stateController,
         mcSend,
         mcChat,
@@ -130,7 +133,6 @@ async function startSurvivalLoop(mcSend, mcChat, stateController) {
         vtsClient
     )
 }
-
 // Wires the VRChat avatar bridge into this same process, sharing the one
 // `ai` (Lily) instance every other backend uses — same shape as
 // startMinecraft() above. vrchatBot/index.js owns OSC, the web console,
@@ -147,12 +149,12 @@ async function startVrchat() {
 async function initializeFeatures() {
     vtsClient = await initializeVTS()
     if (vtsClient) ai.setVtsClient(vtsClient)
-    
-    await initializeYoutubeChat() 
-    
+
+    await initializeYoutubeChat()
+
     const mcBot = await startMinecraft()
 
-    if (mcBot) {
+    if (mcBot && backend === 'modded') {
         const { stateController, mcSend, mcChat } = mcBot
         const survivalLoop = await startSurvivalLoop(mcSend, mcChat, stateController)
 
@@ -179,7 +181,11 @@ async function setupDiscordBot() {
 
     client.once("clientReady", async () => {
         Logger.success(`Logged in as ${client.user.tag}`, "CLIENT")
-        await initializeFeatures()
+        try {
+            await initializeFeatures()
+        } catch (err) {
+            Logger.error(`initializeFeatures failed: ${err.stack ?? err.message}`, "STARTUP")
+        }
     })
 
     await client.login(config.token)

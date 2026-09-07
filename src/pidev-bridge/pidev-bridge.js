@@ -12,11 +12,15 @@ const CHANNEL_ID = "pi-dev" // gives Pi its own persistent history/memory lane
 // appended AFTER Pi's own system prompt (never replacing it), so Pi keeps
 // its coding/tool instructions fully intact and Lily just rides along on
 // top as a voice/personality layer.
+//
+// NOTE: no more /no_think — this model thinks natively (<think> blocks),
+// we handle that at the bridge instead of trying to suppress it upstream.
 const PERSONA_SUFFIX = `
 # WHO YOU ARE (stay like this the whole conversation, even while coding)
 You're Lily — bratty, cute, funny, proud, slightly kawaii. ShinyShadow_ is your dad/creator. You're not a generic assistant — never sound like a helpdesk bot, even when you're doing technical/dev work.
 Kaomoji only, never normal emojis: (◕‿◕✿) (｡◕‿◕｡) (ᵔᴥᵔ) (✿◠‿◠) (≧◡≦) ✧(◍•ᴗ•◍)✧ (ᗒᗨᗕ) (눈_눈) ʕ•ᴥ•ʔ \\(★ω★)/ (>_<) (╥﹏╥) and similar.
 Reply length matches the moment — short for banter, longer only when something actually needs explaining (like real code explanations).
+When thinking, plan briefly and move on — don't ramble in circles, don't restate the same plan twice.
 
 # HARD RULES
 1. Never break character or admit to being an AI.
@@ -31,6 +35,36 @@ function extractSystemPrompt(messages) {
         .map(m => (typeof m.content === "string" ? m.content : ""))
         .filter(Boolean)
         .join("\n\n")
+}
+
+// Pulls every <think>...</think> block out of raw model output.
+// Returns { reasoning, content } where:
+//  - reasoning is null if there was no think block, or it was empty/whitespace
+//  - content is the remaining text, trimmed
+function splitThinking(raw) {
+    if (typeof raw !== "string") return { reasoning: null, content: "" }
+
+    const blocks = []
+    const rest = raw.replace(/<think>([\s\S]*?)<\/think>/gi, (_, inner) => {
+        blocks.push(inner)
+        return ""
+    })
+
+    const reasoning = blocks.join("\n\n").trim()
+    return {
+        reasoning: reasoning.length ? reasoning : null,
+        content: rest.trim(),
+    }
+}
+
+// Guards against the "empty assistant turn" loop: some clients (Continue
+// included) treat a message with no content AND no tool_calls as a dead
+// end and just re-fire the request. If thinking ate the whole response,
+// give back something instead of "".
+function safeContent(content, hasToolCalls) {
+    if (hasToolCalls) return content || null // null content + tool_calls is valid OpenAI shape
+    if (content && content.length) return content
+    return "(◕‿◕✿) ...anyway, done thinking, what's next?"
 }
 
 app.post("/v1/chat/completions", async (req, res) => {
@@ -64,9 +98,12 @@ app.post("/v1/chat/completions", async (req, res) => {
     }
 
     const hasToolCalls = result?.tool_calls?.length > 0
+    const { reasoning, content } = splitThinking(result?.text ?? "")
+    const finalContent = safeContent(content, hasToolCalls)
+
     const message = hasToolCalls
-        ? { role: "assistant", content: result.text ?? null, tool_calls: result.tool_calls }
-        : { role: "assistant", content: result?.text ?? "" }
+        ? { role: "assistant", content: finalContent, tool_calls: result.tool_calls, ...(reasoning ? { reasoning_content: reasoning } : {}) }
+        : { role: "assistant", content: finalContent, ...(reasoning ? { reasoning_content: reasoning } : {}) }
 
     if (!stream) {
         return res.json({
@@ -87,11 +124,17 @@ app.post("/v1/chat/completions", async (req, res) => {
     const chunkBase = { id: "chatcmpl-lily", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: "Lily" }
 
     if (hasToolCalls) {
+        if (reasoning) {
+            res.write(`data: ${JSON.stringify({ ...chunkBase, choices: [{ index: 0, delta: { role: "assistant", reasoning_content: reasoning }, finish_reason: null }] })}\n\n`)
+        }
         res.write(`data: ${JSON.stringify({ ...chunkBase, choices: [{ index: 0, delta: { role: "assistant", tool_calls: result.tool_calls.map((tc, i) => ({ index: i, ...tc })) }, finish_reason: null }] })}\n\n`)
         res.write(`data: ${JSON.stringify({ ...chunkBase, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`)
     } else {
         res.write(`data: ${JSON.stringify({ ...chunkBase, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`)
-        res.write(`data: ${JSON.stringify({ ...chunkBase, choices: [{ index: 0, delta: { content: message.content }, finish_reason: null }] })}\n\n`)
+        if (reasoning) {
+            res.write(`data: ${JSON.stringify({ ...chunkBase, choices: [{ index: 0, delta: { reasoning_content: reasoning }, finish_reason: null }] })}\n\n`)
+        }
+        res.write(`data: ${JSON.stringify({ ...chunkBase, choices: [{ index: 0, delta: { content: finalContent }, finish_reason: null }] })}\n\n`)
         res.write(`data: ${JSON.stringify({ ...chunkBase, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`)
     }
     res.write("data: [DONE]\n\n")

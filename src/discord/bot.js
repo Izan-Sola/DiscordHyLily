@@ -15,6 +15,7 @@ import { fileURLToPath } from "url"
 import { exec, spawn } from "child_process"
 import { promisify } from "util"
 import prism from "prism-media"
+import sharp from "sharp"
 import { Lily } from "../ai/index.js"
 import { initLogChannel } from "../utils/Logger.js"
 import { config } from "../utils/config.js"
@@ -43,8 +44,27 @@ const VIDEO_EXT = /\.(mp4|webm|mov)$/i
 const GIF_EXT = /\.gif$/i
 
 /**
+ * Extracts the first frame of any image buffer (static or animated —
+ * webp/gif/png/etc) as a JPEG buffer, using sharp/libvips.
+ *
+ * This deliberately replaces ffmpeg for image formats: the system ffmpeg
+ * build on this box lacks --enable-libwebp, so its native WebP decoder
+ * can't parse the ANIM/ANMF chunks used by animated WebP (the format
+ * Tenor/Giphy/Klipy stickers are frequently served as), and silently
+ * produces an empty output. sharp ships its own libvips/libwebp via
+ * prebuilt binaries, so it doesn't depend on how the system ffmpeg was
+ * compiled, and it works directly on in-memory buffers — no temp files.
+ */
+async function extractFirstFrameJpeg(buffer) {
+    return sharp(buffer, { animated: false, pages: 1 })
+        .jpeg({ quality: 90 })
+        .toBuffer()
+}
+
+/**
  * Given a Discord attachment, returns { base64, mimeType } (always JPEG for
- * videos/GIFs after frame extraction) or null if not a supported media type.
+ * videos/GIFs/images after frame extraction) or null if not a supported
+ * media type.
  */
 async function attachmentToBase64(attachment) {
     const { contentType = "", url, name = "" } = attachment
@@ -62,10 +82,11 @@ async function attachmentToBase64(attachment) {
     try {
         // Download
         const res = await fetch(url)
-        fs.writeFileSync(tmpIn, Buffer.from(await res.arrayBuffer()))
+        const downloaded = Buffer.from(await res.arrayBuffer())
+        fs.writeFileSync(tmpIn, downloaded)
 
         if (isVideo) {
-            // Extract frame from middle of video
+            // Real video (mp4/webm/mov) — sharp can't touch this, still needs ffmpeg
             let duration = 0
             try {
                 const { stdout } = await execAsync(
@@ -82,26 +103,15 @@ async function attachmentToBase64(attachment) {
             return { base64: b64, mimeType: "image/jpeg" }
         }
 
-        if (isGif) {
-            // Extract first frame of GIF
-            await execAsync(`ffmpeg -y -i "${tmpIn}" -frames:v 1 -q:v 2 "${tmpOut}"`)
+        // Image or GIF (static or animated, including webp) — use sharp/libvips
+        try {
             fs.unlink(tmpIn, () => { })
-            const b64 = fs.readFileSync(tmpOut).toString("base64")
-            fs.unlink(tmpOut, () => { })
-            return { base64: b64, mimeType: "image/jpeg" }
+            const jpegBuf = await extractFirstFrameJpeg(downloaded)
+            return { base64: jpegBuf.toString("base64"), mimeType: "image/jpeg" }
+        } catch (err) {
+            Logger.error("sharp failed on attachment: " + err.message, "MEDIA")
+            return null
         }
-
-        // Regular image — read directly
-        const b64 = fs.readFileSync(tmpIn).toString("base64")
-        fs.unlink(tmpIn, () => { })
-
-        // Detect actual mime from content-type or extension
-        let mimeType = "image/jpeg"
-        if (contentType.startsWith("image/")) mimeType = contentType.split(";")[0].trim()
-        else if (/\.png$/i.test(name)) mimeType = "image/png"
-        else if (/\.webp$/i.test(name)) mimeType = "image/webp"
-
-        return { base64: b64, mimeType }
     } catch (err) {
         Logger.error("Failed to process attachment: " + err.message, "MEDIA")
         try { fs.unlink(tmpIn, () => { }) } catch { }
@@ -111,27 +121,40 @@ async function attachmentToBase64(attachment) {
 }
 
 /**
- * Extracts all supported media attachments from a Discord message.
- * Returns array of { base64, mimeType } (may be empty).
+ * Extracts all supported media attachments from a Discord message's embeds
+ * (Tenor, Giphy, Klipy, etc). Tries sharp first (handles static + animated
+ * webp/gif/png directly from the buffer); falls back to ffmpeg only for
+ * genuine video embeds that sharp can't decode.
  */
 async function extractImagesFromEmbeds(message) {
     const results = []
 
     for (const embed of message.embeds) {
-        const gifUrl = embed.thumbnail?.url || embed.image?.url || embed.video?.url
-        if (!gifUrl) continue
+        const mediaUrl = embed.thumbnail?.url || embed.image?.url || embed.video?.url
+        if (!mediaUrl) continue
+
         try {
-            const tmpId = randomUUID()
-            const tmpIn = join(tmpdir(), `lily_embed_${tmpId}_in`)
-            const tmpOut = join(tmpdir(), `lily_embed_${tmpId}.jpg`)
-            const res = await fetch(gifUrl)
-            fs.writeFileSync(tmpIn, Buffer.from(await res.arrayBuffer()))
-            await execAsync(`ffmpeg -y -i "${tmpIn}" -frames:v 1 -q:v 2 "${tmpOut}"`)
-            fs.unlink(tmpIn, () => { })
-            const b64 = fs.readFileSync(tmpOut).toString("base64")
-            fs.unlink(tmpOut, () => { })
-            results.push({ base64: b64, mimeType: "image/jpeg" })
-            Logger.success("Extracted frame from embed GIF", "MEDIA")
+            const res = await fetch(mediaUrl)
+            const buf = Buffer.from(await res.arrayBuffer())
+
+            try {
+                // Fast path — covers static/animated webp, gif, png, jpeg
+                const jpegBuf = await extractFirstFrameJpeg(buf)
+                results.push({ base64: jpegBuf.toString("base64"), mimeType: "image/jpeg" })
+                Logger.success("Extracted frame from embed media (sharp)", "MEDIA")
+            } catch {
+                // Fallback — actual video (webm/mp4), sharp can't decode it
+                const tmpId = randomUUID()
+                const tmpIn = join(tmpdir(), `lily_embed_${tmpId}_in`)
+                const tmpOut = join(tmpdir(), `lily_embed_${tmpId}.jpg`)
+                fs.writeFileSync(tmpIn, buf)
+                await execAsync(`ffmpeg -y -i "${tmpIn}" -frames:v 1 -q:v 2 "${tmpOut}"`)
+                fs.unlink(tmpIn, () => { })
+                const b64 = fs.readFileSync(tmpOut).toString("base64")
+                fs.unlink(tmpOut, () => { })
+                results.push({ base64: b64, mimeType: "image/jpeg" })
+                Logger.success("Extracted frame from embed video (ffmpeg fallback)", "MEDIA")
+            }
         } catch (err) {
             Logger.error("Failed to process embed: " + err.message, "MEDIA")
         }
@@ -223,6 +246,7 @@ export async function speak(text) {
         busy = false
     }
 }
+
 function sanitizeInput(text) {
     return text
         .replace(/[:;=8][\-o\*\']?[\)\]\(\[dDpP\/\:\}\{@\|\\]/gi, "")
@@ -512,6 +536,7 @@ export async function createBot() {
         const vts = new VTSClient()
         connectVts(vts)
     })
+
     async function connectVts(vts, retryMs = 5000) {
         if (!isVtubeEnabled()) return
         try {
@@ -532,11 +557,11 @@ export async function createBot() {
                 setTimeout(() => connectVts(new VTSClient(), retryMs), retryMs)
             })
         } catch (err) {
-            
             Logger.warning(`VTube Studio not available yet (${err.message}), retrying in ${retryMs}ms`, "VTUBE")
             setTimeout(() => connectVts(vts, retryMs), retryMs)
         }
     }
+
     client.commands = new Collection()
 
     const commandsPath = path.join(__dirname, "commands")
@@ -575,6 +600,7 @@ export async function createBot() {
             // to message.author.username in DMs.
             authorName = sanitizeInput(message.member?.username || message.author.username)
         }
+
         const bannedUsers = config.bannedUsers
         if (!authorName || bannedUsers.includes(authorName) || bannedUsers.includes(message.author.displayName)) return
 
@@ -621,7 +647,7 @@ export async function createBot() {
             return
         }
 
-        // ─── Fetch the 15 messages before this ping/reply and inject as context ──
+        // ─── Fetch the 5 messages before this ping/reply and inject as context ──
         try {
             const fetched = await message.channel.messages.fetch({
                 limit: 5,

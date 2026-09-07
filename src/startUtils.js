@@ -69,7 +69,7 @@ export function isVrchatEnabled(flags = parseFlags()) {
 }
 // Tool-config derivation for the survival loop / AI layer - takes the
 // same config object everything else now uses, not a mode string.
-export function getToolConfig(runConfig) {
+export function getToolConfig(runConfig = {}) {
     return {
         includeMinecraft: true,
         includeVtube: runConfig.vtube,
