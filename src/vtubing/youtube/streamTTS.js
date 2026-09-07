@@ -3,14 +3,14 @@ import { promisify } from 'util'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { sanitizeInput } from '../../ai/utils.js' 
-import { getConfig } from '../../ai/config.js'
+import { sanitizeInput } from '../../ai/utils.js'
+import { getVtubeConfig } from '../../vtube/vtubeConfig.js'
 
 const execAsync = promisify(exec)
 const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN
 
 export async function speakToStream(text) {
-    const { platform, ttsOutputDevice } = getConfig()
+    const { platform, ttsOutputDevice } = getVtubeConfig()
     const clean = sanitizeInput(text)
     const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
     const wavPath = path.join(os.tmpdir(), `lily_stream_${Date.now()}.wav`)

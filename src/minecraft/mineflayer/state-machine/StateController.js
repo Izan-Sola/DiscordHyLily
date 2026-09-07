@@ -201,7 +201,7 @@ export class StateController {
     // ── Chat / whisper ──────────────────────────────────────────────────────
     // Public chat, split into <=250 char chunks like the original mcChat.
     mcChat(message) {
-        _splitMessage(message).forEach(chunk => this.bot.chat(chunk))
+        this._splitMessage(message).forEach(chunk => this.bot.chat(chunk))
     }
 
     // Private reply via /msg — used when the incoming message was a whisper,
@@ -350,7 +350,15 @@ export class StateController {
             can_see_sky: bot.entity.position ? bot.blockAt(bot.entity.position.offset(0, 2, 0))?.skyLight > 8 : undefined
         }
     }
-
+    _splitMessage(message, maxLen = 250) {
+        const text = String(message ?? '').trim()
+        if (!text) return []
+        const chunks = []
+        for (let i = 0; i < text.length; i += maxLen) {
+            chunks.push(text.slice(i, i + maxLen))
+        }
+        return chunks
+    }
     _timeOfDayLabel(t) {
         // vanilla ticks: 0=dawn, 6000=noon, 12000=dusk, 18000=midnight
         if (t < 1000) return 'dawn'

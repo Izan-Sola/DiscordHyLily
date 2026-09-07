@@ -96,7 +96,7 @@ export function attachWhisperListener(bot, onWhisper) {
  * lines the same way mcChat does for public chat.
  */
 export function mcWhisper(bot, username, message, limit = 250) {
-    _splitMessage(message, limit).forEach(chunk => {
+    this._splitMessage(message, limit).forEach(chunk => {
         bot.chat(`/msg ${username} ${chunk}`)
     })
     Logger.info(`→ ${username}: ${message}`, "WHISPER")

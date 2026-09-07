@@ -1,11 +1,12 @@
 import axios from 'axios'
 import { Logger } from '../../utils/Logger.js'
+import { getVtubeConfig } from '../../vtube/vtubeConfig.js'
 
 const API_BASE = 'https://www.googleapis.com/youtube/v3'
 
-// Never poll faster than this, regardless of what pollingIntervalMillis
-// says - a floor against a misbehaving/faked response burning quota.
-const MIN_POLL_MS = 10000
+// Floor against a misbehaving/faked response burning quota - configurable
+// via youtubeMinPollMs, but a poll interval below this is never honored.
+const DEFAULT_MIN_POLL_MS = 10000
 
 // ─── YouTube Live Chat Client ─────────────────────────────────────────
 //
@@ -53,6 +54,11 @@ export class YouTubeLiveChatClient {
         return liveChatId
     }
 
+    _minPollMs() {
+        const { youtubeMinPollMs } = getVtubeConfig()
+        return youtubeMinPollMs ?? DEFAULT_MIN_POLL_MS
+    }
+
     async _poll() {
         if (this.stopped) return
 
@@ -82,7 +88,7 @@ export class YouTubeLiveChatClient {
                 this.seenIds = new Set([...this.seenIds].slice(-1000))
             }
 
-            const delay = Math.max(pollingIntervalMillis ?? 10000, MIN_POLL_MS)
+            const delay = Math.max(pollingIntervalMillis ?? 10000, this._minPollMs())
             this.pollTimer = setTimeout(() => this._poll(), delay)
         } catch (err) {
             const reason = err.response?.data?.error?.errors?.[0]?.reason

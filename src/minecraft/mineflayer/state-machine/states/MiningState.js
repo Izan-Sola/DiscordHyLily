@@ -11,8 +11,10 @@ export class MiningState {
     }
 
     onEnter(payload = {}) {
-        // Accept either a raw payload object or { payload } wrapper for parity
-        // with both StateController.dispatchAction and the older signature.
+        if (this.started && !this.cancelled) {
+            Logger.warning('Already mining — ignoring new break request until current dig finishes', "MINE")
+            return
+        }
         this.payload = payload.payload ?? payload ?? null
         this.started = false
         this.broken = 0
