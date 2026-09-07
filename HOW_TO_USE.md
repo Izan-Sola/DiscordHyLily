@@ -123,9 +123,9 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 * If the server runs in the same local network, then you can just use `wss://localhost:8766` or `wss://127.0.0.1:8766` as the url.
 
-#### Mineflayer way (wip)
+#### Mineflayer way (early wip)
 
-###### Barely tested btw. So if it doesnt work it iiiiis what it iiiiis.
+###### it is messy atm
 
 * You are gonna need 4 environment variables:
 
