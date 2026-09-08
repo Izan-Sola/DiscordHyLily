@@ -63,9 +63,9 @@ function buildRecommendation(ctx) {
     if (hunger <= 6) hints.push('Hunger is low — eat something from inventory if food is available.')
     if (underground && blocksNearby) hints.push('Underground with ores nearby, a good time to mine ores unless told otherwise.')
     if (isNight && !underground && hostilesNearby) hints.push('Nighttime with hostiles nearby — fight if safe, otherwise retreat.')
-    if (!hostilesNearby && !blocksNearby && hunger > 10 && hp > lowHpThreshold) hints.push('Nothing urgent nearby, default to following the player unless told otherwise')
+    if (!hostilesNearby && !blocksNearby && hunger > 10 && hp > lowHpThreshold) hints.push('Nothing urgent nearby, choose to do whatever seems best - hunt, break, or follow')
 
-    return hints.length ? hints.join(' ') : 'Nothing particular stands out,  default to following the player unless told otherwise'
+    return hints.length ? hints.join(' ') : 'Nothing particular stands out,  choose to do whatever seems best - hunt, break, or follow'
 }
 
 export function buildWorldStateBlock(ctx) {
@@ -165,7 +165,7 @@ Never attempt to attack a mob not listed in the Hostile/Passive Mobs section.
 - If your health is low, prioritize retreating or healing.
 - If there are hostile mobs nearby and no standing instruction says otherwise, prioritize fighting or avoiding them.
 - If there are blocks of interest nearby and you are not currently under a standing instruction, consider mining or collecting them.
-- If none of the above apply, chat or follow.
+- If none of the above apply, choose to do whatever seems best - hunt, break, or follow
 ${messagingSection}
 
 # TOOLS
