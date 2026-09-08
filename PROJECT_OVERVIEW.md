@@ -23,7 +23,9 @@
     - [Features](#features)
       
     - [Commands](#commands)
-      
+
+  - [STTS](#stts)
+    
   - [Minecraft](#minecraft)
     
     - [Neoforge (Arclight server)](#neoforge-arclight-server)
