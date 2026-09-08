@@ -1,4 +1,3 @@
-//* Comments added by Lily herself lol
 // Mining state manages breaking blocks
 // Tracks whether mining has started and handles transitions
 export class MiningState {
@@ -6,50 +5,72 @@ export class MiningState {
         this.ctx = ctx
     }
 
-    // Initializes state variables and handles entry logic
     onEnter({ payload = null } = {}) {
         this.payload = payload
         this.started = false
+        this.expectedAmount = payload?.amount || 1
+        this.brokenCount = 0
     }
 
-    // Cleans up state when exiting
     onExit() {
         if (this.started) this.ctx.mcSend('cancel_break')
         this.payload = null
         this.started = false
     }
 
-    // Main tick method, handles continuous actions
     async onTick() {
         const { ctx } = this
 
-        // Exit if no payload is set (no block to mine)
         if (!this.payload) {
             ctx.transitionTo('IDLE')
             return
         }
 
-        // Start mining if not already started
         if (!this.started) {
             this.started = true
             ctx.mcSend('break', this.payload)
+            console.log('[MINING] Sent break command:', JSON.stringify(this.payload))
         }
     }
 
-    // Called when mining action is initiated
     onMiningStarted() {
-        // Empty placeholder, you'd implement actual logic here if needed
+        // placeholder
     }
 
-    // Handles block breaking events
     onBlockBroken(event) {
-        // Early exit if not started or if nextX is null (invalid break)
-        if (!this.started) return
-        if (event.done === false && event.nextX != null) return
+        console.log('[MINING] Received block_broken event:', JSON.stringify(event))
 
-        // Stop mining and transition to idle on successful break
+        if (!this.started) {
+            console.log('[MINING] Ignoring event – mining not started')
+            return
+        }
+
+        // If the event indicates chaining, stay in MINING
+        if (event.done === false && event.nextX != null) {
+            console.log('[MINING] Chaining to next block – staying in MINING')
+            return
+        }
+
+        // If done is true, we're finished
+        if (event.done === true) {
+            console.log('[MINING] Mining complete – transitioning to IDLE')
+            this.started = false
+            this.payload = null
+            this.ctx.transitionTo('IDLE')
+            return
+        }
+
+        // If done is missing or malformed, log and stay (safety)
+        console.warn('[MINING] Unexpected event – done=' + event.done + ', nextX=' + event.nextX)
+        // If we have a nextX but done is not false, we still try to stay
+        if (event.nextX != null) {
+            console.log('[MINING] nextX present but done not false – staying')
+            return
+        }
+
+        // Fallback: if done is false but nextX is null, treat as done (shouldn't happen)
         this.started = false
         this.payload = null
-        this.ctx.transitionTo('IDLE')
+        this.ctx.transitionTo('FOLLOWING')
     }
 }

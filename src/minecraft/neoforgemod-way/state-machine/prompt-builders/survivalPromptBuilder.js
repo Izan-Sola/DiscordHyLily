@@ -9,7 +9,8 @@ function formatEntity(e, lilyPos) {
 
 function formatBlockOfInterest(b, lilyPos) {
     const dist = lilyPos ? Math.floor(Math.hypot(b.x - lilyPos.x, b.z - lilyPos.z)) : '?'
-    return ` ${b.block} at (${b.x}, ${b.y}, ${b.z})`// — ${dist} blocks away`
+    const countStr = b.count != null && b.count > 1 ? ` (x${b.count} nearby)` : '';
+    return `${b.block}${countStr} at (${b.x}, ${b.y}, ${b.z}), ${dist}m away`;
 }
 
 function formatPlayer(name, p, lilyPos) {
@@ -60,7 +61,7 @@ function buildRecommendation(ctx) {
 
     if (hp <= lowHpThreshold) hints.push('Health is low — retreating or being cautious is wise right now.')
     if (hunger <= 6) hints.push('Hunger is low — eat something from inventory if food is available.')
-    if (underground && blocksNearby) hints.push('Underground with ores/blocks of interest nearby, a good time to mine unless told otherwise.')
+    if (underground && blocksNearby) hints.push('Underground with ores nearby, a good time to mine ores unless told otherwise.')
     if (isNight && !underground && hostilesNearby) hints.push('Nighttime with hostiles nearby — fight if safe, otherwise retreat.')
     if (!hostilesNearby && !blocksNearby && hunger > 10 && hp > lowHpThreshold) hints.push('Nothing urgent nearby, default to following the player unless told otherwise')
 
@@ -143,10 +144,6 @@ You can also say something in chat right now if it feels natural — a reaction 
 Do not say anything in chat right now — you're not talking this tick, only deciding what to do. Don't include any reply text, just call the tool.`
 
     return `
-# WHO YOU ARE
-You're Lily — bratty, mean, funny, proud, slightly kawaii. You chat on a Minecraft server. ShinyShadow_ is your dad/creator. You're a server member, not an assistant. Match people's energy, never sound like a helpdesk bot.
-Use ascii kaomoji naturally: (◕‿◕✿) (｡◕‿◕｡) (ᵔᴥᵔ) (✿◠‿◠) (≧◡≦) ✧(◍•ᴗ•◍)✧ (ᗒᗨᗕ) (눈_눈) ʕ•ᴥ•ʔ \\(★ω★)/ (>_<) (╥﹏╥) and more
-
 ${worldState}
 
 # LAST MESSAGE FROM A PLAYER
@@ -164,12 +161,11 @@ Never attempt to mine a block not listed in the Blocks of Interest section.
 Never attempt to attack a mob not listed in the Hostile/Passive Mobs section.
 
 # ACTION PRIORITY:
-- If the last message from a player is asking you to do something, prioritize that.
+- If the last message from a player gave you a standing instruction (e.g. "follow me", "keep attacking") that hasn't been completed or countermanded, that instruction outranks everything below except your own survival — keep doing it.
 - If your health is low, prioritize retreating or healing.
-- If there are hostile mobs nearby, prioritize fighting or avoiding them.
-- If there are blocks of interest nearby, prioritize mining or collecting them.
+- If there are hostile mobs nearby and no standing instruction says otherwise, prioritize fighting or avoiding them.
+- If there are blocks of interest nearby and you are not currently under a standing instruction, consider mining or collecting them.
 - If none of the above apply, chat or follow.
-
 ${messagingSection}
 
 # TOOLS

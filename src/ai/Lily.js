@@ -792,11 +792,11 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
                     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
                 }
 
-                // const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
-                // if (didMinecraftAction) {
-                //     Logger.info(`Ending turn, no further tool offers this turn`, "ACTION DISPATCHED")
-                //     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
-                // }
+                const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
+                if (didMinecraftAction) {
+                    Logger.info(`Ending turn, no further tool offers this turn`, "ACTION DISPATCHED")
+                    return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
+                }
 
                 continue
             }

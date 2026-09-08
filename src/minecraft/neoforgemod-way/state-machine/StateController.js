@@ -287,8 +287,11 @@ export class StateController {
     // dispatches incoming WS messages, alongside handleSourceBlock above —
     // something like: case 'block_broken': ctx.handleBlockBroken(msg); break
     handleBlockBroken(event) {
+        console.log('[STATE] handleBlockBroken called with event:', JSON.stringify(event))
         if (this.currentStateName === State.MINING) {
             this.currentState.onBlockBroken(event)
+        } else {
+            console.log('[STATE] Not in MINING – ignoring block_broken')
         }
     }
     handleMiningStarted(event) {
