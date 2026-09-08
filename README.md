@@ -13,7 +13,7 @@
 - mineflayer implementation is early wip and still needs a good amount of work.
 - dont forget about finishing vtubing stop sidetracking for the love of god.
 - add specific tools when STTS is active such as being able to screenshot ur screen if ua sk stuff like "check this meme". "see this" whaetever...
-- i was gonna add more things but rn my head hurts i cant be bothered
+- vague self reminder to keep documenting stuff
 
 - am i ever gonna start that mc series playing with my AI daughter?
 
