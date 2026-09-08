@@ -177,7 +177,7 @@ export class StateController {
                 if (args.entityId == null) return { ok: false, message: 'attack needs an entityId to target.' }
                 const target = this.findEntityById(args.entityId)
                 if (!target) return { ok: false, message: 'That entity is no longer nearby.' }
-                this.mcSend('swap_slot', { slot: args.slot })
+                this.mcSend('hotbar', { slot: args.slot })
                 this.transitionTo(State.ATTACKING, { entityId: args.entityId })
                 return { ok: true }
             }
@@ -204,9 +204,9 @@ export class StateController {
                 return { ok: true };
             }
 
-            case 'swap_slot': {
-                if (!args.slot) return { ok: false, message: 'swap_slot needs a slot number.' };
-                this.mcSend('swap_slot', { slot: args.slot });
+            case 'hotbar': {
+                if (!args.slot) return { ok: false, message: 'hotbar needs a slot number.' };
+                this.mcSend('hotbar', { slot: args.slot });
                 return { ok: true };
             }
 

@@ -3,10 +3,10 @@ import { ToolRouter, ALL_TOOL_NAMES } from '../../../../ai/tools/toolRouter.js'
 import { Logger } from '../../../../utils/Logger.js'
 import { getToolConfig } from '../../../../startUtils.js'
 
-const ACTIONS_INTERVAL_MS = 20000
+const ACTIONS_INTERVAL_MS = 10000
 const MSG_MIN_MS = 2 * 60 * 1000
 const MSG_MAX_MS = 6 * 60 * 1000
-const HISTORY_MAX_TURNS = 8
+const HISTORY_MAX_TURNS = 4
 
 // ─── Tool Selection Based on Mode ────────────────────────────────────────────
 function getToolsForMode(router, mode) {
@@ -87,11 +87,11 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
         }
 
         // Don't run if bot is busy
-        const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
-        if (busyStates.includes(stateController.currentStateName)) {
-            Logger.info(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
-            return
-        }
+        // const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
+        // if (busyStates.includes(stateController.currentStateName)) {
+        //     Logger.info(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
+        //     return
+        // }
 
         // Check if we should send a message
         const allowMessage = Date.now() >= nextMessageAt

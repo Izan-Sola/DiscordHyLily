@@ -8,7 +8,7 @@
     "presence_penalty": 0.1,
     "repeat_penalty": 1.1,
     "repeat_last_n": 256,
-    "max_tokens": 512,
+    "max_tokens": 2048,
     "maxConvoMessages": 12,
     "maxMinecraftConvoMessages": 14,
     "maxRawMessages": 30,

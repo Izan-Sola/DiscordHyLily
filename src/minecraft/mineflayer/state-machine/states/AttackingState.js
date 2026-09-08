@@ -17,13 +17,27 @@ export class AttackingState {
     if (this.attackInterval) clearInterval(this.attackInterval)
     this.attackInterval = setInterval(() => {
       if (this.ctx.currentStateName !== 'ATTACKING') return
-      const stillFighting = this.targetId != null
+
+      const target = this.targetId != null
         ? this.ctx.findEntityById(this.targetId)
         : this.ctx.nearestHostile()
-      if (stillFighting && this.ctx._dist(this.ctx.lilyPos, stillFighting) <= ATTACK_RANGE) {
-        this.ctx.bot.attack(stillFighting)
+
+      if (!target) {
+        if (this.targetId != null) this.ctx.transitionTo('IDLE')
+        return
       }
-    }, ATTACK_INTERVAL_MS)
+
+      this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1, z: target.z })
+
+      const dist = this.ctx._dist(this.ctx.lilyPos, target)
+      if (dist > 2.5) {
+        // refresh the destination every tick instead of walking an old path to completion
+        this.ctx.move.moveToward(this.ctx.lilyPos, target)
+      } else {
+        this.ctx.move.stop()
+        this.ctx.mcSend('attack', { mode: 'once' })
+      }
+    }, 150) // fast enough that a moving target's position never goes stale for long
   }
 
   onTick() {

@@ -60,11 +60,11 @@ function buildRecommendation(ctx) {
 
     if (hp <= lowHpThreshold) hints.push('Health is low — retreating or being cautious is wise right now.')
     if (hunger <= 6) hints.push('Hunger is low — eat something from inventory if food is available.')
-    if (underground && blocksNearby) hints.push('Underground with ores/blocks of interest nearby — a good time to mine.')
+    if (underground && blocksNearby) hints.push('Underground with ores/blocks of interest nearby, a good time to mine unless told otherwise.')
     if (isNight && !underground && hostilesNearby) hints.push('Nighttime with hostiles nearby — fight if safe, otherwise retreat.')
-    if (!hostilesNearby && !blocksNearby && hunger > 10 && hp > lowHpThreshold) hints.push('Nothing urgent nearby — free to explore, chat, or just idle.')
+    if (!hostilesNearby && !blocksNearby && hunger > 10 && hp > lowHpThreshold) hints.push('Nothing urgent nearby, default to following the player unless told otherwise')
 
-    return hints.length ? hints.join(' ') : 'Nothing particular stands out — use your judgement.'
+    return hints.length ? hints.join(' ') : 'Nothing particular stands out,  default to following the player unless told otherwise'
 }
 
 export function buildWorldStateBlock(ctx) {
@@ -159,6 +159,9 @@ This is a suggestion based on current conditions, not a command — weigh it aga
 
 # DECISION GUIDELINES
 Every tick you must make use of the minecraft_action_* tools depending on the context. You can call tools more than once if you need to, per example if you want to break multiple blocks.
+Note that if the requested action is not possible because the requested block or mob does not appear in the list, do NOT call the tool. Just wait for the block or mob to appear in the list later.
+Never attempt to mine a block not listed in the Blocks of Interest section.
+Never attempt to attack a mob not listed in the Hostile/Passive Mobs section.
 
 # ACTION PRIORITY:
 - If the last message from a player is asking you to do something, prioritize that.

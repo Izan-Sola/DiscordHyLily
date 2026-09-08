@@ -83,11 +83,11 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
         }
 
         // Don't run if bot is busy
-        const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
-        if (busyStates.includes(stateController.currentStateName)) {
-            Logger.info(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
-            return
-        }
+        // const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
+        // // if (busyStates.includes(stateController.currentStateName)) {
+        // //     Logger.info(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
+        // //     return
+        // // }
 
         // Check if we should send a message
         const allowMessage = Date.now() >= nextMessageAt

@@ -216,11 +216,11 @@ const MINECRAFT_TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_attack",
-            description: "Attack a specific mob by its id, using a weapon from your hotbar. Once called, you automatically keep chasing/attacking that entity until it dies or you're told to stop. Requires slot (1-36, must hold a weapon: sword/axe/trident) and entityId (from Hostile/Passive Mobs list). If no weapon in hotbar, don't call this — explain in chat instead. Reply naturally after; never mention the tool.",
+            description: "Attack a specific mob by its id, using a SWORD or AXE from your inventory. Requires slot (1-36, must hold a weapon: sword/axe/trident) and entityId (from Hostile/Passive Mobs list). If no weapon in inventory, don't call this, and explain why in chat. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 36, description: "Hotbar slot (1-36) holding the weapon." },
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Inventory slot (1-36) holding a SWORD or AXE." },
                     entityId: { type: "number", description: "Exact id of the mob to attack." }
                 },
                 required: ["slot", "entityId"]
@@ -237,7 +237,7 @@ const MINECRAFT_TOOLS = [
                 properties: {
                     slot: { type: "number", minimum: 1, maximum: 36, description: "Optional hotbar slot holding food to swap to first. Omit to eat whatever's held." }
                 },
-                required: []
+                required: [ "slot" ]
             }
         }
     },
@@ -306,7 +306,7 @@ const MINECRAFT_TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_break",
-            description: "Mine blocks. For a block type, pass x/y/z + amount directly. For MULTIPLE distinct block types in one request (e.g. 'acacia AND oak logs'), pass a `blocks` array instead — one entry per type — so it's ONE call, not one per type. Runs on its own after calling; don't call again for the same request. Reply naturally after; never mention the tool.",
+            description: "Mine blocks. For a block type, pass x/y/z + amount directly. For MULTIPLE distinct block types in one request (e.g. 'acacia AND oak logs'), pass a `blocks` array instead — one entry per type — so it's ONE call, not one per type. Runs on its own after calling; don't call again for the same request. CRITICAL — amount: if the player states or implies a quantity, that exact number MUST go in `amount`. Examples: 'get me 10 oak logs' -> amount:10. 'mine 5 stone' -> amount:5. 'get some wood'/'a few logs' (no number given) -> amount:5. 'get wood' (bare, no quantity language at all) -> amount:8. NEVER default to amount:1 unless the player explicitly says one/a single/just one. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
                 properties: {
@@ -315,10 +315,10 @@ const MINECRAFT_TOOLS = [
                     z: { type: "number" },
                     block: { type: "string", description: "Block name, alternative to x/y/z." },
                     radius: { type: "number" },
-                    amount: { type: "number", minimum: 1, maximum: 32 },
+                    amount: { type: "number", minimum: 1, maximum: 32, description: "How many blocks to mine. Extract the exact number from the player's request if one is given — do not default to 1. See tool description for defaults when no number is stated." },
                     blocks: {
                         type: "array",
-                        description: "Use for multiple distinct block types in one request. Each entry is the same shape as the flat args (x/y/z or block, plus amount).",
+                        description: "Use for multiple distinct block types in one request. Each entry is the same shape as the flat args (x/y/z or block, plus amount, following the same amount-extraction rule).",
                         items: {
                             type: "object",
                             properties: {
