@@ -240,14 +240,6 @@
 
 ###### `src/ai/vrchatbot/`
 
-### Listening and voice
-
-###### `audiostuff/`
-
-- **audioLoop.js**: Handles the listening and processing audio loop. Uses `Silero VAD` to detect speech/silence and know when to start processing audio. Sends transcriptions requests, checks for wake word and schedules butt ins.
-- **voice.js**: Handles generating the voice replies from the AI. Depending on the tts engine specified in the `config.json` inside `util`, it will make a request to `edge-tts` or a `xtts` server for custom voice generation.
-
-> Depending on the platform, a different process is used for playing/recording the audio.
 
 <br>
 
