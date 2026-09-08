@@ -25,26 +25,26 @@ export function isManualRecordingActive() { return manualActive; }
 
 export async function start() {
     if (vad) {
-        Logger.warning('[STTS] already running');
+        console.log('[STTS] already running');
         return;
     }
 
-    Logger.info('[STTS] initializing VAD...');
+    console.log('[STTS] initializing VAD...');
     vad = await initVad({
         onSpeechStart: () => {
-         //   Logger.info('[STTS] 🔴 speech started');
+            console.log('[STTS] 🔴 speech started');
             emitter.emit('speechStart');
         },
         onSpeechEnd: async (float32Audio) => {
-      //      Logger.info('[STTS] 🟢 speech ended, transcribing...');
+            console.log('[STTS] 🟢 speech ended, transcribing...');
             const rawText = await transcribeBuffer(floatToWav(float32Audio));
-           // Logger.info(`[STTS] 📝 raw transcript: "${rawText}"`);
+            console.log(`[STTS] 📝 raw transcript: "${rawText}"`);
 
             const text = cleanTranscript(rawText);
-            Logger.success(`[STTS] 📝 cleaned transcript: "${text}"`);
+            console.log(`[STTS] 📝 cleaned transcript: "${text}"`);
 
             if (!text) {
-                Logger.warning('[STTS] ❌ empty transcript, ignoring');
+                console.log('[STTS] ❌ empty transcript, ignoring');
                 return;
             }
 
@@ -53,28 +53,33 @@ export async function start() {
             if (ambientBuffer.length > 10) ambientBuffer.shift();
 
             emitter.emit('speech', text);
-            Logger.info(`[STTS] 📢 speech event emitted: "${text}"`);
+            console.log(`[STTS] 📢 speech event emitted: "${text}"`);
 
-            const wake = extractWakeSentence(text);
-            if (wake) {
-          //      Logger.info(`[STTS] 🔔 WAKE WORD detected: "${wake}"`);
-                emitter.emit('wake', wake, text);
+            if (cfg.enableWakeWord === false) {
+                console.log(`[STTS] 🔔 wake word disabled, treating all speech as wake: "${text}"`);
+                emitter.emit('wake', text, text);
             } else {
-               // Logger.info('[STTS] ⏰ no wake word detected');
+                const wake = extractWakeSentence(text);
+                if (wake) {
+                    console.log(`[STTS] 🔔 WAKE WORD detected: "${wake}"`);
+                    emitter.emit('wake', wake, text);
+                } else {
+                    console.log('[STTS] ⏰ no wake word detected');
+                }
             }
         }
     });
 
-    Logger.info('[STTS] starting recorder...');
+    console.log('[STTS] starting recorder...');
     recorder = startRecorder((chunk) => {
         if (vad) {
             vad.processAudio(int16BufferToFloat32(chunk)).catch(err => {
-                Logger.error('[STTS] VAD processing error:', err.message);
+                console.error('[STTS] VAD processing error:', err.message);
             });
         }
     });
 
-    Logger.info('[STTS] ✅ transcription started, listening for audio...');
+    console.log('[STTS] ✅ transcription started, listening for audio...');
 }
 
 export function stop() {
@@ -89,7 +94,7 @@ export function stop() {
         manualProc = null;
     }
     manualActive = false;
-    Logger.info('[STTS] transcription stopped');
+    console.log('[STTS] transcription stopped');
 }
 
 export function skipCurrentRecording() {
@@ -99,7 +104,7 @@ export function skipCurrentRecording() {
 export function startManualRecording() {
     if (manualActive) return;
     manualActive = true;
-    Logger.info('[STTS] 📹 manual recording started');
+    console.log('[STTS] 📹 manual recording started');
 
     if (vad) vad.flush().catch(() => { });
     const isWindows = String(cfg.tts.platform || 'GNOME').toUpperCase() === 'WINDOWS';
@@ -121,7 +126,7 @@ export function startManualRecording() {
             MANUAL_AUDIO_PATH,
         ]);
     manualProc.on('error', (err) => {
-        Logger.error('[STTS] manual recording failed:', err.message);
+        console.error('[STTS] manual recording failed:', err.message);
         manualActive = false;
         manualProc = null;
     });
@@ -129,7 +134,7 @@ export function startManualRecording() {
 
 export function stopManualRecording() {
     if (!manualActive || !manualProc) return Promise.resolve('');
-    Logger.info('[STTS] 📹 manual recording stopping...');
+    console.log('[STTS] 📹 manual recording stopping...');
     const proc = manualProc;
     manualProc = null;
     const isWindows = String(cfg.tts.platform || 'GNOME').toUpperCase() === 'WINDOWS';
@@ -139,11 +144,11 @@ export function stopManualRecording() {
                 const rawText = await transcribeFile(MANUAL_AUDIO_PATH);
                 await unlink(MANUAL_AUDIO_PATH).catch(() => { });
                 const text = cleanTranscript(rawText);
-                Logger.info(`[STTS] 📝 manual transcript: "${text}"`);
+                console.log(`[STTS] 📝 manual transcript: "${text}"`);
                 manualActive = false;
                 resolve(text);
             } catch (err) {
-                Logger.error('[STTS] manual transcription error:', err.message);
+                console.error('[STTS] manual transcription error:', err.message);
                 manualActive = false;
                 resolve('');
             }

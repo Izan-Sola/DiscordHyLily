@@ -1,6 +1,6 @@
 // voiceAssistant/index.js
 import { stt, tts } from '../STTS/index.js';              // <-- changed
-import { buildVrchatSystemPrompt } from '../ai/prompts.js';
+import { SYSTEM_PROMPT } from '../ai/prompts.js';
 import { ai } from '../discord/bot.js';
 
 const ASSISTANT_ENABLED = true; // or from config
@@ -14,7 +14,7 @@ export function startVoiceAssistant() {
     stt.on('wake', async (wakeSentence, fullText) => {    // <-- changed
    //     console.log(`[voiceAssistant] wake: ${wakeSentence}`);
         try {
-            const systemPrompt = buildVrchatSystemPrompt(false);
+            const systemPrompt = SYSTEM_PROMPT;
             const result = await ai.chat('voiceAssistant', wakeSentence, systemPrompt, {}, []);
             if (result && result.text) {
                 const reply = result.text;

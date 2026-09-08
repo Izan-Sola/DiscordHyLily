@@ -1,4 +1,5 @@
 {
+    "enableWakeWord": true,
     "audioMonitorSource": "alsa_input.pci-0000_00_1f.3.analog-stereo.99",
     "whisperSidecarUrl": "http://192.168.18.48:8775/transcribe",
     "wakeWords": [
