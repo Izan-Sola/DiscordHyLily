@@ -1,59 +1,43 @@
+// vrchatBot/server.js
 import express from "express";
 import { setStatus } from "./util/chatbox.js";
 import { captureBase64 } from "./bot/perception.js";
-import { speak } from "./audiostuff/voice.js";
+import { speak } from "../STTS/index.js";                    // <-- changed (now from STTS)
 import { VRCHAT_CHANNEL_ID } from "../ai/index.js";
 import { buildVrchatSystemPrompt } from "../ai/prompts.js";
 
-// Set once at startup by vrchatBot/index.js (startVrchatBot({ ai })) --
-// the same Lily instance every other backend (Discord/Minecraft) in this
-// process shares. Replaces the old standalone brain.js, which hit a
-// local Ollama endpoint directly with its own copy of the personality
-// prompt and its own tiny tool set; queryBrain() below is what used to
-// live in bot/brain.js's queryBrainMessage(), now delegating the actual
-// thinking to ai.chat()/ai.buttIn() instead.
 let ai = null;
 
 export function setBrain(lilyInstance) {
-    ai = lilyInstance;
+  ai = lilyInstance;
 }
 
-// situation is "user" (direct address, whatever the input method) or
-// "ambient" (butt-in commentary on a conversation she wasn't addressed
-// in) -- same distinction the old brain.js made via queryBrainMessage's
-// SITUATION_PREFIXES, now expressed as which Lily method to call and
-// which system-prompt variant (buildVrchatSystemPrompt's ambient flag)
-// to pass in.
 async function queryBrain(situation, text, { withImage = false } = {}) {
-    if (!ai) {
-        console.error("[vrchat] queryBrain called before setBrain() wired up the shared Lily instance");
-        return "... (•ᴗ•)";
+  if (!ai) {
+    console.error("[vrchat] queryBrain called before setBrain() wired up the shared Lily instance");
+    return "... (•ᴗ•)";
+  }
+
+  const systemPromptOverride = buildVrchatSystemPrompt(situation === "ambient");
+
+  let images = [];
+  if (withImage) {
+    try {
+      const base64 = await captureBase64();
+      images = [{ mimeType: "image/png", base64 }];
+    } catch (err) {
+      console.error(`[vrchat] screenshot capture failed, falling back to text-only: ${err.message}`);
     }
+  }
 
-    const systemPromptOverride = buildVrchatSystemPrompt(situation === "ambient");
+  const result = situation === "ambient"
+    ? await ai.buttIn(VRCHAT_CHANNEL_ID, text, systemPromptOverride)
+    : await ai.chat(VRCHAT_CHANNEL_ID, text, systemPromptOverride, {}, images);
 
-    let images = [];
-    if (withImage) {
-        try {
-            const base64 = await captureBase64();
-            images = [{ mimeType: "image/png", base64 }];
-        } catch (err) {
-            console.error(`[vrchat] screenshot capture failed, falling back to text-only: ${err.message}`);
-        }
-    }
-
-    const result = situation === "ambient"
-        ? await ai.buttIn(VRCHAT_CHANNEL_ID, text, systemPromptOverride)
-        : await ai.chat(VRCHAT_CHANNEL_ID, text, systemPromptOverride, {}, images);
-
-    // handleMessage() returns null if the channel's lock was already held
-    // (a race between two requestReply() callers) -- treat that the same
-    // as a deliberate ambient non-reaction rather than erroring.
-    if (!result) return "NONE";
-    return result.text ?? "NONE";
+  if (!result) return "NONE";
+  return result.text ?? "NONE";
 }
 
-//const IDLE_MESSAGE = "[ShinyShadow_'s AI Daughter] Talk to me via the web interface linked in my profile. (WIP: prompt her via voice)";
 const IDLE_MESSAGE = "";
 
 const IDLE_RESEND_INTERVAL_MS = 15000;
@@ -64,13 +48,6 @@ let idleInterval = null;
 let replyTimer = null;
 let lastSentAt = 0;
 
-// True from the moment a reply pipeline starts (the brain query) until
-// speak() has finished playing. This is the single source of truth that
-// stops two replies from overlapping -- everything that can trigger a
-// reply (wake word, butt-in, manual recording, force-send, terminal
-// `!text`, the web console) goes through requestReply() below instead of
-// separately calling queryBrainMessage + handleReply, so this flag is
-// always accurate no matter which path fired.
 let pipelineBusy = false;
 
 export function isBusy() {
@@ -92,16 +69,11 @@ function stopIdleLoop() {
   idleInterval = null;
 }
 
-// Sets the chatbox to the reply and speaks it, then reverts to idle after
-// REPLY_HOLD_MS. This is the ONLY place speak() is called from -- every
-// caller goes through requestReply(), which holds `pipelineBusy` for the
-// whole span so a second pipeline can never start (and therefore never
-// call speak()) while this one is still running.
 async function handleReply(reply) {
   stopIdleLoop();
   if (replyTimer) clearTimeout(replyTimer);
   setStatus(reply);
-  await speak(reply);
+  await speak(reply);                                       // <-- changed (now global)
   replyTimer = setTimeout(startIdleLoop, REPLY_HOLD_MS);
 }
 
@@ -110,21 +82,6 @@ function timeRemaining() {
   return elapsed < COOLDOWN_MS ? Math.ceil((COOLDOWN_MS - elapsed) / 1000) : 0;
 }
 
-// Single entry point for every reply pipeline in the app. Replaces the old
-// pattern where audioLoop.js, index.js, and the web routes each separately
-// checked checkCooldown(), called queryBrainMessage(), then called
-// handleReply() themselves -- that duplication is exactly what let two
-// pipelines run at once (e.g. a wake-word reply still mid-speak() while a
-// force-send or a web request slipped past its own independent check).
-//
-// Returns { reply } on success (reply may be "NONE" for a deliberate
-// ambient non-reaction), or { error } if the request was turned away.
-//
-// `bypassCooldown` skips the *time* cooldown -- used by the manual/
-// force-send keys, which are meant to feel instant once she's free -- but
-// it never skips the busy lock, so those paths still can't talk over an
-// in-flight reply, they just don't have to wait out the full window once
-// one finishes.
 export async function requestReply(situation, text, { withImage = false, bypassCooldown = false } = {}) {
   if (pipelineBusy) {
     return { error: "still speaking, one sec" };
@@ -140,11 +97,11 @@ export async function requestReply(situation, text, { withImage = false, bypassC
   lastSentAt = Date.now();
   setStatus(withImage ? "Thinking (with image)..." : "Thinking...");
   try {
-  const reply = await queryBrain(situation, text, { withImage });
-  if (reply !== "NONE") {
-    await handleReply(reply);
-  }
-  return { reply };
+    const reply = await queryBrain(situation, text, { withImage });
+    if (reply !== "NONE") {
+      await handleReply(reply);
+    }
+    return { reply };
   } finally {
     pipelineBusy = false;
   }

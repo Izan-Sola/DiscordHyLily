@@ -1,7 +1,11 @@
+// start.js
+import 'dotenv/config'
 import { createBot, ai } from "./discord/bot.js"
 import { config } from "./utils/config.js"
 import { Logger } from "./utils/Logger.js"
 import { parseFlags, getConfigFromFlags, describeConfig, isVtubeEnabled, isModdedEnabled, isMineflayerEnabled } from "./startUtils.js"
+import * as stts from './STTS/index.js'                           // <-- changed
+import { startVoiceAssistant, stopVoiceAssistant } from './voiceAssistant/index.js'
 
 const flags = parseFlags()
 
@@ -27,9 +31,10 @@ Logger.info(`  • VRChat: ${isVrchatEnabled ? '✅ Enabled' : '❌ Disabled'}`,
 Logger.info(`  • Continue.dev coding bridge: ${isCodingEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Tavily MCP server: ${isCodingEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Pi-dev bridge: ${isPidevEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
+Logger.info(`  • Speech-to-Text (STT) + Voice Assistant: ${runConfig.stts ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 
-if (!isDiscordEnabled && !backend && !isVrchatEnabled) {
-    Logger.warning('No Discord, no Minecraft backend, and no VRChat bridge active - there is nothing for this process to do', "STARTUP")
+if (!isDiscordEnabled && !backend && !isVrchatEnabled && !runConfig.stts) {
+    Logger.warning('No Discord, no Minecraft, no VRChat bridge, and no STTS active - there is nothing for this process to do', "STARTUP")
 }
 
 let vtsClient = null
@@ -123,7 +128,7 @@ async function startMinecraft() {
 async function startSurvivalLoop(mcSend, mcChat, stateController) {
     let loopFn
     if (isMineflayerEnabled()) {
-        return null // mineflayer starts its own survival loop internally, see below
+        return null
     } else if (isModdedEnabled()) {
         ; ({ startSurvivalLoop: loopFn } = await import('./minecraft/neoforgemod-way/state-machine/helpers/survivalLoop.js'))
     } else {
@@ -139,28 +144,12 @@ async function startSurvivalLoop(mcSend, mcChat, stateController) {
         vtsClient
     )
 }
-// Wires the VRChat avatar bridge into this same process, sharing the one
-// `ai` (Lily) instance every other backend uses — same shape as
-// startMinecraft() above. vrchatBot/index.js owns OSC, the web console,
-// voice listening, and the VRChat auto-join pipeline; all it needs from
-// here is the shared brain. Fully independent of `backend`/`vtube` — the
-// vrchat flag alone is enough to bring it up.
-// Tavily MCP server (tavily-mcp-server.js) — gated behind the 'coding'
-// flag, spawned alongside the Continue bridge. This one is NOT an HTTP
-// bridge like the other two: it's a stdio-based MCP server, run exactly
-// the way you'd run it manually with `node tavily-mcp-server.js`. Spawning
-// it here just saves you starting it by hand every time; Continue's own
-// mcpServers config still needs to point at this same script with its own
-// `command`/`args` the way MCP stdio servers normally work — a stdio
-// server's stdin/stdout has to be owned by whichever process actually
-// talks MCP to it, so this spawned copy and the one Continue launches are
-// independent processes, not a shared instance. NOTE: adjust the path
-// below to wherever you place tavily-mcp-server.js relative to this file.
+
 async function startTavilyServer() {
     if (!isCodingEnabled) return null
     const { spawn } = await import('node:child_process')
     const child = spawn(process.execPath, ['./src/coding/tavily-mcp-server.js'], {
-        stdio: 'pipe', // or 'inherit'
+        stdio: 'pipe',
         env: process.env,
     })
 
@@ -171,7 +160,6 @@ async function startTavilyServer() {
         Logger.error(`Tavily MCP server failed to spawn: ${err.message}`, "TAVILY")
     })
 
-    // Log any errors from the child process
     child.stderr?.on('data', (data) => {
         Logger.error(`Tavily MCP stderr: ${data.toString()}`, "TAVILY")
     })
@@ -185,27 +173,17 @@ async function startVrchat() {
     return startVrchatBot({ ai })
 }
 
-// Continue.dev coding bridge (continue-bridge.js) — gated behind the
-// 'coding' flag. Shares the same `ai` (Lily) instance as every other
-// backend. NOTE: adjust the import path below to wherever you place
-// continue-bridge.js relative to this file.
 async function startCodingBridge() {
     if (!isCodingEnabled) return null
     const { startContinueBridge } = await import('./coding/continue-bridge.js')
     return startContinueBridge(ai)
 }
 
-// Pi coding-assistant bridge (pidev-bridge.js) — gated behind the 'pidev'
-// flag. Deliberately does NOT share `ai`; it spins up its own Lily
-// instance with its own memory lane, same as before. NOTE: adjust the
-// import path below to wherever you place pidev-bridge.js relative to
-// this file.
 async function startPidevBridge() {
     if (!isPidevEnabled) return null
     const { startPidevBridge: start } = await import('./pidev-bridge/pidev-bridge.js')
     return start()
 }
-
 
 async function initializeFeatures() {
     vtsClient = await initializeVTS()
@@ -270,6 +248,18 @@ async function setupDiscordBot() {
 
 async function main() {
     try {
+        // --- Start STT & voice assistant if flag is set ---
+        if (runConfig.stts) {
+            try {
+                await stts.start()                                  // <-- changed
+                Logger.success('Transcription service started', 'STTS')
+                startVoiceAssistant()
+                Logger.success('Voice assistant started', 'VOICE')
+            } catch (err) {
+                Logger.error(`Failed to start STT/voice assistant: ${err.message}`, 'STTS')
+            }
+        }
+
         const client = await setupDiscordBot()
 
         const shutdown = async (signal) => {
@@ -303,6 +293,13 @@ async function main() {
 
             if (pidevBridgeHandle?.close) {
                 await new Promise(resolve => pidevBridgeHandle.close(resolve))
+            }
+
+            // --- Stop voice assistant and transcription ---
+            if (runConfig.stts) {
+                stopVoiceAssistant()
+                stts.stop()                                          // <-- changed
+                Logger.info('Transcription and voice assistant stopped', 'STTS')
             }
 
             if (client) {

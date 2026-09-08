@@ -18,6 +18,7 @@ export async function startVrchatBot({ ai }) {
     initOsc();
     initFollow();
     startWebServer(3030);
+    // Start voice listener (now just attaches event listeners, doesn't start audio capture)
     startVoiceListener();
     initVrchatAutoJoin();
 
