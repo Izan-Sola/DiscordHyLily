@@ -56,7 +56,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - There's a bunch of flags you can combine to enable each functionality. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
 
-- All the available flags are : `modded`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, and `vtube`
+- All the available flags are : `modded`, `stts`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, and `vtube`
 
 All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the flags you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
 
