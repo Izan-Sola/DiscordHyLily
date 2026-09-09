@@ -1,4 +1,4 @@
-## HOW TO USE
+## HOW TO USE - WIP
 ###### If you are interested in having your own VRChat bot or, for whatever reason you want to use this "brain" for your AI, you are free to do so, and you are gonna need to set up a bunch of stuff, plus a bunch of environment variables. I'm not gonna go too much into detail but all this should be helpful enough if you know what you are doing or at least are tech savvy. If not then well fuck around and find out, AI is free and learning is fun. Yes it is a lot of stuff to setup, welcome to local hosting or whatever. Yes some of my code might suck or be messy. Also this is a WIP, so yeah, it is not perfect. You might need to edit some of the provided python scripts, if you use them, just one or two variables.
 
 ###### Now theres also a video guide for the VRChat bot: https://www.youtube.com/watch?v=ylGpdnShBqA
@@ -56,7 +56,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - There's a bunch of flags you can combine to enable each functionality. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
 
-- All the available flags are : `modded`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, and `vtube`
+- All the available flags are : `modded`, `stts`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, and `vtube`
 
 All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the flags you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
 

@@ -6,13 +6,14 @@
 
 - Related: https://github.com/Izan-Sola/Lily-Minecraft , https://github.com/Izan-Sola/LilyBlog , https://github.com/Izan-Sola/LilyGnomeWidget , https://github.com/Izan-Sola/LilyVrchat
 
-##### Notes
+
+##### Notes or todos 
 
 - still cant bend water and chi.
 - mineflayer implementation is early wip and still needs a good amount of work.
 - dont forget about finishing vtubing stop sidetracking for the love of god.
-- should make flags for coding and pi dev functionalities isntead of having to start them separately(?.
-
+- add specific tools when STTS is active such as being able to screenshot ur screen if ua sk stuff like "check this meme". "see this" whaetever...
+- vague self reminder to keep documenting stuff
 
 - am i ever gonna start that mc series playing with my AI daughter?
 
