@@ -36,7 +36,12 @@ class ToolRouter {
         this.minecraft = minecraft ? new MinecraftToolExecutor(mcSend, getStateController) : null
         this.vtube = vtube ? new VtubeToolExecutor(vtsClient) : null
         this.vrchat = vrchat ? new VrchatToolExecutor() : null
-        this.stts = stts ? new SttsToolExecutor(sttsConfig.enabled, sttsConfig.pidevEnabled) : null
+        this.stts = stts ? new SttsToolExecutor(
+            sttsConfig.enabled,
+            sttsConfig.pidevEnabled,
+            sttsConfig.codingEnabled,
+            sttsConfig.editCallback,
+        ) : null
         this.browser = browser ? new BrowserToolExecutor() : null
 
         // Build name→executor map only for enabled executors

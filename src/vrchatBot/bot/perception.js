@@ -19,7 +19,7 @@ function screenshotCommand() {
     case "GNOME":
     default:
       if (platform !== "GNOME") {
-        console.warn(`[perception] unknown PLATFORM "${cfg.PLATFORM}", falling back to GNOME's gnome-screenshot`);
+        Logger.warn(`[perception] unknown PLATFORM "${cfg.PLATFORM}", falling back to GNOME's gnome-screenshot`);
       }
       return `gnome-screenshot -f "${cfg.SCREENSHOT_PATH}"`;
   }

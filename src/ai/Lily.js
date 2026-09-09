@@ -9,6 +9,7 @@ import { Logger } from '../utils/Logger.js'
 import { saveFlawlessTurn } from './saveFlawlessTurns.js'
 import { getConfig } from './config.js'
 import { speakToStream } from '../vtubing/youtube/streamTTS.js'
+import { CODE_SYSTEM_PROMPT, stripCodeFence } from '../coding/codeEditShared.js'
 
 const YOUTUBE_CHANNEL_ID = "youtube"
 const MINECRAFT_CHANNEL_ID = "minecraft"
@@ -42,7 +43,11 @@ export class Lily {
             mcSend,
             getStateController,
             vtsClient,
-            sttsConfig,
+            sttsConfig: {
+                ...sttsConfig,
+                editCallback: (filePath, originalContent, instruction) =>
+                    this.generateFileEdit(filePath, originalContent, instruction),
+            },
             flags: {
                 minecraft: flags.modded || flags.mineflayer,
                 vtube: flags.vtube,
@@ -137,7 +142,28 @@ export class Lily {
             this.channelLocks.set(channelId, false)
         }
     }
+    // Generates a full merged file for the voice "edit the current file" path.
+    // Deliberately a single direct completion (not a tool-call round trip) —
+    // this is a trusted, already-guarded request, so there's no need to
+    // reproduce continue-bridge's two-role agent/apply split here. The overwrite
+    // guard (checkShrinkRatio/checkStubBodies) runs on the result in
+    // sttsTools.js, same checks continue-bridge.js's apply role is guarded by.
+    async generateFileEdit(filePath, originalContent, instruction) {
+        const userPrompt = [
+            `File: ${filePath}`,
+            `Original content:\n\`\`\`\n${originalContent}\n\`\`\``,
+            `Instruction: ${instruction}`,
+        ].join('\n\n')
 
+        const messages = [
+            { role: 'system', content: CODE_SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt },
+        ]
+
+        const msg = await this.sendToOllama(messages, [], true, [], { max_tokens: 8000, temperature: 0.15 })
+        const content = msg?.content?.trim()
+        return content ? stripCodeFence(content) : null
+    }
     pushRawMessage(channelId, authorName, content) {
         this.getRawBuffer(channelId).push(authorName, content)
     }

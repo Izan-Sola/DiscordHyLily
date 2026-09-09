@@ -4,25 +4,24 @@ import { promisify } from 'node:util'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import axios from 'axios'
 import { Logger } from '../../utils/Logger.js'
 import { ok, err } from './toolHelpers.js'
+import { checkShrinkRatio, checkStubBodies } from '../../coding/codeEditShared.js'
 
 const execFileAsync = promisify(execFile)
 
 const PI_TIMEOUT_MS = 90_000
 const SCREENSHOT_TIMEOUT_MS = 15_000
-// Some capture paths (GNOME's screenshot portal in particular) can return
-// control to the caller slightly before the file is flushed to disk. Rather
-// than trust a 0 exit code, we poll for the file to actually show up with
-// non-zero size before declaring success.
 const FILE_APPEAR_TIMEOUT_MS = 3_000
 const FILE_APPEAR_POLL_MS = 100
+const COMPANION_REQUEST_TIMEOUT_MS = 5_000
 
 // ─── Desktop/session detection ───────────────────────────────────────────
 
 function detectDesktop() {
     const de = (process.env.XDG_CURRENT_DESKTOP || process.env.DESKTOP_SESSION || '').toLowerCase()
-    const sessionType = (process.env.XDG_SESSION_TYPE || '').toLowerCase() // 'wayland' | 'x11' | ''
+    const sessionType = (process.env.XDG_SESSION_TYPE || '').toLowerCase()
     return {
         isGnome: de.includes('gnome'),
         isKde: de.includes('kde') || de.includes('plasma'),
@@ -48,22 +47,15 @@ async function waitForFile(filePath, timeoutMs = FILE_APPEAR_TIMEOUT_MS, pollMs 
                     lastSize = s.size
                 }
             }
-        } catch {
-            // not there yet, keep polling
-        }
+        } catch { /* not there yet */ }
         await new Promise(resolve => setTimeout(resolve, pollMs))
     }
     return false
 }
 
-// ─── Per-platform/per-DE capture strategies ──────────────────────────────
-// Each strategy is (outPath) => Promise<void> that resolves once the OS-level
-// call has been issued. A 0 exit code does NOT guarantee the file exists yet
-// (see FILE_APPEAR_TIMEOUT_MS above) - callers must still verify the file.
+// ─── Per-platform/per-DE screenshot capture strategies ───────────────────
 
 async function captureWindows(outPath) {
-    // Captures the full virtual screen (all monitors). Escape backslashes
-    // for embedding the Windows path inside the PowerShell string literal.
     const psPath = outPath.replace(/\\/g, '\\\\')
     const script = [
         'Add-Type -AssemblyName System.Windows.Forms',
@@ -85,12 +77,6 @@ async function captureWindows(outPath) {
 }
 
 async function captureGnomeDbus(outPath) {
-    // Calls the Shell's own screenshot method directly over D-Bus. This is
-    // the call gnome-screenshot itself wraps, but going straight to D-Bus
-    // makes the success/failure boolean explicit in stdout instead of
-    // trusting a CLI wrapper's exit code - which is what was silently lying
-    // to us before (exit 0 with no file written under some Wayland/portal
-    // setups).
     const { stdout } = await execFileAsync('gdbus', [
         'call', '--session',
         '--dest', 'org.gnome.Shell.Screenshot',
@@ -109,7 +95,6 @@ async function captureGnomeScreenshotCli(outPath) {
 }
 
 async function captureSpectacle(outPath) {
-    // -b background (no GUI), -n no notification/sound, -o output path.
     await execFileAsync('spectacle', ['-b', '-n', '-o', outPath], { timeout: SCREENSHOT_TIMEOUT_MS })
 }
 
@@ -134,16 +119,31 @@ async function captureImportMagick(outPath) {
 // Tools that only make sense while Lily is being talked to via speech.
 // Which tools *exist at all* for this process is flag-conditional:
 //   - get_screenshot needs only the STTS module (sttsEnabled)
-//   - run_system_command additionally needs the pidev bridge, since it's
-//     just a wrapper around shelling out to `pi`
+//   - run_system_command additionally needs the pidev bridge (pidevEnabled)
+//   - edit_active_vscode_file additionally needs the coding bridge
+//     (codingEnabled) AND a companion VSCode extension reachable over
+//     HTTP AND an editCallback wired in from Lily (see Lily.generateFileEdit)
 // The channel restriction (voiceAssistant-only) is NOT enforced here -
 // that's toolRouter's job, since it's the one place that knows the
 // calling channel. This executor only decides which tools this process
 // is even capable of offering.
 class SttsToolExecutor {
-    constructor(sttsEnabled = false, pidevEnabled = false) {
+    /**
+     * @param {boolean} sttsEnabled
+     * @param {boolean} pidevEnabled
+     * @param {boolean} codingEnabled
+     * @param {(filePath: string, originalContent: string, instruction: string) => Promise<string>} [editCallback]
+     *   Called to actually generate the new file content for
+     *   edit_active_vscode_file. Wired in by Lily so this executor can
+     *   reach back into the model without importing Lily directly
+     *   (avoids a circular import — same pattern as mcSend).
+     */
+    constructor(sttsEnabled = false, pidevEnabled = false, codingEnabled = false, editCallback = null) {
         this.sttsEnabled = !!sttsEnabled
         this.pidevEnabled = !!pidevEnabled
+        this.codingEnabled = !!codingEnabled
+        this._editCallback = editCallback
+        this._vscodeCompanionUrl = process.env.VSCODE_COMPANION_URL || 'http://localhost:8768'
 
         // Tool results are text-only, so a captured screenshot can't be
         // returned inline. It's parked here as base64 instead; the tool
@@ -160,16 +160,14 @@ class SttsToolExecutor {
     get tools() {
         return this._activeToolDefs()
     }
-
     _activeToolDefs() {
         if (!this.sttsEnabled) return []
         const defs = [SCREENSHOT_TOOL]
         if (this.pidevEnabled) defs.push(RUN_COMMAND_TOOL)
+        if (this.codingEnabled) defs.push(EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL)
         return defs
     }
 
-    // Call once per tool-loop turn after executing whatever was
-    // requested, to fold any captured screenshots into the next model call.
     takePendingImages() {
         const images = this._pendingImages
         this._pendingImages = []
@@ -199,8 +197,6 @@ class SttsToolExecutor {
         }
     }
 
-    // Builds the ordered list of capture strategies to try for the current
-    // platform/desktop, most-specific/most-reliable first.
     _screenshotStrategies() {
         if (process.platform === 'win32') {
             return [['windows', captureWindows]]
@@ -225,8 +221,6 @@ class SttsToolExecutor {
         if (isWayland && !isGnome) {
             add('grim', captureGrim)
         }
-        // Desktop env couldn't be determined (or wasn't GNOME/KDE) - try the
-        // other DE-specific paths too, cheaply, in case detection was wrong.
         if (!isGnome) {
             add('gnome-dbus', captureGnomeDbus)
             add('gnome-screenshot', captureGnomeScreenshotCli)
@@ -237,8 +231,6 @@ class SttsToolExecutor {
         if (isWayland) {
             add('grim', captureGrim)
         }
-        // Generic X11 fallbacks - harmless to try last even on Wayland,
-        // since XWayland setups can still make these work.
         add('scrot', captureScrot)
         add('maim', captureMaim)
         add('import', captureImportMagick)
@@ -246,9 +238,6 @@ class SttsToolExecutor {
         return strategies
     }
 
-    // Tries capture strategies in order until one both exits cleanly AND
-    // actually produces a non-empty file - fixing the previous bug where a
-    // strategy could report success (exit 0) before the file was written.
     async _captureScreenshot(outPath) {
         const strategies = this._screenshotStrategies()
         const failures = []
@@ -323,10 +312,104 @@ class SttsToolExecutor {
             })
         })
     }
+
+    // ─── Voice-triggered VSCode edit ─────────────────────────────────────
+    //
+    // Continue only executes tool calls in response to requests it starts
+    // itself, so a voice command can't reach through Continue. Instead this
+    // talks to a small companion VSCode extension (vscode-companion/) over
+    // localhost HTTP to read/write the active editor directly, and reuses
+    // the same generation + overwrite guard as continue-bridge.js's apply
+    // role (see src/coding/codeEditShared.js) rather than reimplementing it.
+    async editActiveFile(args = {}) {
+        if (!this.sttsEnabled || !this.codingEnabled) {
+            return err("VSCode editing tool isn't enabled.")
+        }
+        if (!this._editCallback) {
+            return err("Editing isn't wired up right now.")
+        }
+
+        const { instruction } = args
+        if (!instruction?.trim()) return err("instruction required.")
+
+        let active
+        try {
+            const { data } = await axios.get(
+                `${this._vscodeCompanionUrl}/active-file`,
+                { timeout: COMPANION_REQUEST_TIMEOUT_MS }
+            )
+            active = data
+        } catch (e) {
+            Logger.error(`Couldn't reach VSCode companion: ${e.message}`, "STTS")
+            return err("Couldn't reach VSCode — is it open with the companion extension installed?")
+        }
+
+        if (!active?.path) return err("No file is currently open in VSCode.")
+
+        Logger.info(`Editing ${active.path}: ${instruction.slice(0, 200)}`, "STTS")
+
+        let newContent
+        try {
+            newContent = await this._editCallback(active.path, active.content, instruction)
+        } catch (e) {
+            Logger.error(`Edit generation failed: ${e.message}`, "STTS")
+            return err("Couldn't come up with an edit for that.")
+        }
+
+        if (!newContent?.trim()) return err("Didn't get a usable edit back.")
+
+        const blockReason =
+            checkShrinkRatio(active.content, newContent, active.path) ??
+            checkStubBodies(newContent, active.path)
+
+        if (blockReason) {
+            Logger.warning(`BLOCKED voice edit: ${blockReason}`, "STTS")
+            return err("That edit looked like it would wipe out real code, so I didn't apply it. Try being more specific.")
+        }
+
+        try {
+            await axios.post(
+                `${this._vscodeCompanionUrl}/apply-edit`,
+                { path: active.path, content: newContent },
+                { timeout: COMPANION_REQUEST_TIMEOUT_MS }
+            )
+        } catch (e) {
+            Logger.error(`Apply failed: ${e.message}`, "STTS")
+            return err("Generated the edit but couldn't apply it in VSCode.")
+        }
+
+        const fileName = active.path.split(/[\\/]/).pop()
+        Logger.success(`Applied voice edit to ${fileName}`, "STTS")
+        return ok(`Edited ${fileName}. It's applied in the editor as unsaved changes — check it over before saving.`)
+    }
+    async readActiveFile() {
+        if (!this.sttsEnabled || !this.codingEnabled) {
+            return err("VSCode reading tool isn't enabled.")
+        }
+
+        let active
+        try {
+            const { data } = await axios.get(
+                `${this._vscodeCompanionUrl}/active-file`,
+                { timeout: COMPANION_REQUEST_TIMEOUT_MS }
+            )
+            active = data
+        } catch (e) {
+            Logger.error(`Couldn't reach VSCode companion: ${e.message}`, "STTS")
+            return err("Couldn't reach VSCode — is it open with the companion extension installed?")
+        }
+
+        if (!active?.path) return err("No file is currently open in VSCode.")
+
+        Logger.info(`Read active file: ${active.path}`, "STTS")
+        return ok(`File: ${active.path}\n\n${active.content}`)
+    }
     async execute(name, args) {
         switch (name) {
             case "get_screenshot": return this.getScreenshot()
             case "run_system_command": return this.runSystemCommand(args)
+            case "edit_active_vscode_file": return this.editActiveFile(args)
+            case "read_active_vscode_file": return this.readActiveFile()
             default:
                 Logger.warning(`Unknown: ${name}`, "TOOL")
                 return err(`Unknown tool: ${name}`)
@@ -365,6 +448,34 @@ const RUN_COMMAND_TOOL = {
     },
 }
 
-const STTS_TOOL_NAMES = new Set([SCREENSHOT_TOOL, RUN_COMMAND_TOOL].map(t => t.function.name))
-
+const EDIT_ACTIVE_FILE_TOOL = {
+    type: "function",
+    function: {
+        name: "edit_active_vscode_file",
+        description:
+            "Edit the file currently open/active in VSCode, based on a natural-language instruction (e.g. 'add error handling to this function', 'rename this variable to userId', 'fix the bug where it double-counts'). Use this when the user asks you to change, fix, or edit code in the editor during a voice conversation. Don't use this for questions about the code - only for actual edit requests. The edit is applied as unsaved changes in VSCode so the user can review and undo it.",
+        parameters: {
+            type: "object",
+            properties: {
+                instruction: {
+                    type: "string",
+                    description: "Clear natural-language description of the change to make to the currently open file.",
+                },
+            },
+            required: ["instruction"],
+        },
+    },
+}
+const READ_ACTIVE_FILE_TOOL = {
+    type: "function",
+    function: {
+        name: "read_active_vscode_file",
+        description:
+            "Read the file currently open/active in VSCode without changing it. Use this when the user asks you to look at, explain, review, or answer questions about the code they're editing, or before making an edit if you need to see the current content first. Returns the file's path and full text content.",
+        parameters: { type: "object", properties: {} },
+    },
+}
+const STTS_TOOL_NAMES = new Set(
+    [SCREENSHOT_TOOL, RUN_COMMAND_TOOL, EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL].map(t => t.function.name)
+)
 export { SttsToolExecutor, STTS_TOOL_NAMES }

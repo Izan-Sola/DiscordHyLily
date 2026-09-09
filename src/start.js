@@ -43,6 +43,7 @@ if (!isDiscordEnabled && !backend && !isVrchatEnabled && !runConfig.stts) {
 const sttsConfig = {
     enabled: runConfig.stts,
     pidevEnabled: runConfig.stts && isPidevEnabled,
+    codingEnabled: runConfig.stts && isCodingEnabled,
 }
 
 export const ai = new Lily(

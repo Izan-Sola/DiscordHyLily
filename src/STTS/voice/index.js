@@ -9,6 +9,12 @@ const TTS_ENGINE = (cfg.tts.engine || 'edge-tts').toLowerCase();
 const isWindows = String(cfg.tts.platform || 'GNOME').toUpperCase() === 'WINDOWS';
 const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN || 'edge-tts';
 
+function silenceStreamErrors(...streams) {
+    for (const s of streams) {
+        if (s) s.on('error', () => { /* expected on kill — pipe already torn down */ });
+    }
+}
+
 function spawnPlayer() {
     const player = isWindows
         ? spawn('ffplay', [
@@ -28,28 +34,56 @@ function spawnPlayer() {
             `--device=${SINK_NAME}`,
         ]);
     player.on('error', (err) => console.error('[STTS voice] player failed:', err.message));
+    silenceStreamErrors(player.stdin);
     return player;
 }
 
 let activePlayer = null;
 let activeUpstream = [];
 let activeAbort = null;
+let generation = 0;
 
+// Kills the current playback chain and resolves once every process in it
+// has actually exited, so callers can safely start a new chain without
+// racing the old one for the audio sink.
 function killActive() {
-    activeUpstream.forEach((p) => p.kill('SIGTERM'));
-    if (activePlayer) activePlayer.kill('SIGTERM');
-    if (activeAbort) activeAbort.abort();
+    const upstream = activeUpstream;
+    const player = activePlayer;
+    const abort = activeAbort;
     activeUpstream = [];
     activePlayer = null;
     activeAbort = null;
+
+    if (abort) abort.abort();
+
+    const procs = [...upstream, player].filter(Boolean);
+    if (!procs.length) return Promise.resolve();
+
+    const waits = procs.map((p) => new Promise((resolve) => {
+        if (p.exitCode !== null || p.signalCode !== null) return resolve();
+        p.once('exit', resolve);
+        p.once('error', resolve);
+    }));
+
+    for (const p of procs) {
+        // Unpipe before killing so a half-dead downstream doesn't get fed
+        // more writes than it can error out cleanly.
+        p.stdout?.unpipe();
+        p.kill('SIGTERM');
+    }
+
+    // Don't hang forever if a process ignores SIGTERM.
+    const timeout = new Promise((resolve) => setTimeout(resolve, 1500));
+    return Promise.race([Promise.all(waits), timeout]);
 }
 
 function sanitizeInput(text) {
     return text.replace(/[\r\n]+/g, ' ').trim();
 }
 
-function playPcmStream(pcmStream) {
+function playPcmStream(pcmStream, myGen) {
     const player = spawnPlayer();
+    silenceStreamErrors(pcmStream);
     pcmStream.pipe(player.stdin);
     activePlayer = player;
     return new Promise((resolve) => {
@@ -60,7 +94,7 @@ function playPcmStream(pcmStream) {
     });
 }
 
-async function speakEdgeTts(clean) {
+async function speakEdgeTts(clean, myGen) {
     const voice = cfg.tts.edgeVoice || DEFAULT_VOICE;
     const rate = cfg.tts.edgeRate || '+20%';
     const synth = spawn(EDGE_TTS_BIN, ['--voice', voice, '--rate', rate, '--text', clean, '--write-media', '-']);
@@ -76,14 +110,18 @@ async function speakEdgeTts(clean) {
         'pipe:1',
     ]);
     decoder.on('error', (err) => console.error('[STTS voice] ffmpeg failed:', err.message));
+    silenceStreamErrors(synth.stdout, decoder.stdin, decoder.stdout);
 
     synth.stdout.pipe(decoder.stdin);
     activeUpstream = [synth, decoder];
-    await playPcmStream(decoder.stdout);
+
+    if (myGen !== generation) { synth.kill('SIGTERM'); decoder.kill('SIGTERM'); return; }
+
+    await playPcmStream(decoder.stdout, myGen);
     if (activeUpstream[0] === synth) activeUpstream = [];
 }
 
-async function speakXtts(clean) {
+async function speakXtts(clean, myGen) {
     const url = cfg.tts.xttsUrl;
     if (!url) {
         console.error('[STTS voice] xttsUrl not set');
@@ -113,6 +151,7 @@ async function speakXtts(clean) {
             const reader = res.body.getReader();
             try {
                 while (true) {
+                    if (myGen !== generation) break; // superseded — stop feeding a dead/dying player
                     const { done, value } = await reader.read();
                     if (done) break;
                     if (!player.stdin.writable) break;
@@ -136,16 +175,21 @@ async function speakXtts(clean) {
 export async function speak(text) {
     const clean = sanitizeInput(text);
     if (!clean) return;
-    if (activePlayer) {
-        console.warn('[STTS voice] speak() while already playing – killing previous');
-        killActive();
+
+    const myGen = ++generation;
+
+    if (activePlayer || activeUpstream.length || activeAbort) {
+        Logger.warning('[STTS voice] speak() while already playing – killing previous');
+        await killActive();
     }
+    if (myGen !== generation) return; // a newer speak() call already superseded us
+
     if (TTS_ENGINE === 'xtts') {
-        await speakXtts(clean);
+        await speakXtts(clean, myGen);
     } else {
         if (TTS_ENGINE !== 'edge-tts') {
-            console.warn(`[STTS voice] unknown engine "${TTS_ENGINE}", falling back to edge-tts`);
+            Logger.warning(`[STTS voice] unknown engine "${TTS_ENGINE}", falling back to edge-tts`);
         }
-        await speakEdgeTts(clean);
+        await speakEdgeTts(clean, myGen);
     }
 }

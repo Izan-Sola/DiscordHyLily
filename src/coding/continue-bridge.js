@@ -24,8 +24,13 @@ const CODE_CHANNEL_ID = "vscode-continue-code"
 // further down CANNOT block a bad apply response the way it blocks a bad
 // edit_existing_file/single_find_and_replace call. These rules are the
 // only line of defense for this path; treat them as load-bearing.
-const CODE_SYSTEM_PROMPT = `You are a code-merging engine. You will be given a file's original content and a set of proposed changes. Output ONLY the complete final file content with the changes correctly applied — nothing else. No explanations, no commentary, no markdown code fences, no "Here's the updated file" preamble. Every line of code not part of the change must be preserved exactly as-is.`
-
+import {
+    CODE_SYSTEM_PROMPT,
+    OVERWRITE_GUARD,
+    STUB_BODY_PATTERN,
+    checkShrinkRatio,
+    checkStubBodies,
+} from "./codeEditShared.js"
 // Suffix appended to Lily's normal persona ONLY for the chat/agent model
 // (the one with tool_use). Never used on the apply-role model above.
 const AGENT_SUFFIX = ``
@@ -75,16 +80,7 @@ function extractTrailingToolResults(messages) {
 // NOTE: this guard only runs against result.tool_calls. The apply-role
 // path never produces a tool_call (see checkApplyShrink below for its
 // much weaker, non-blocking equivalent).
-const OVERWRITE_GUARD = {
-    minOriginalLines: 40,      // only size-guard files bigger than this
-    maxShrinkRatio: 0.5,       // block if new content < 50% of original size
-    minStubHits: 1,            // any `{ ... }`-as-body is disqualifying
-}
 
-// Matches `{ ... }` (or `{...}`, `{  ...  }`, etc.) used as a body right
-// after a function/method signature — i.e. preceded by a `)`. This avoids
-// false-positiving on a legitimate "// ..." comment elsewhere in the diff.
-const STUB_BODY_PATTERN = /\)\s*\{\s*\.\.\.\s*\}/g
 
 function findFilePathArg(args) {
     for (const key of ["filepath", "path", "file", "filePath", "target_file"]) {
@@ -130,17 +126,13 @@ function checkForCatastrophicOverwrite(toolCall) {
         return null // file doesn't exist yet (a real create) or unreadable — not our concern here
     }
 
-    const originalLines = originalContent.split("\n").length
-
     if (name === "edit_existing_file") {
         const changes = args.changes ?? ""
-        const stubHits = (changes.match(STUB_BODY_PATTERN) ?? []).length
-        if (stubHits >= OVERWRITE_GUARD.minStubHits) {
-            Logger.warning(`BLOCKED stub-body patch: ${filepath} (${stubHits} '{ ... }' bodies found)`)
+        const stubReason = checkStubBodies(changes, filepath)
+        if (stubReason) {
+            Logger.warning(`BLOCKED stub-body patch: ${filepath}`)
             return (
-                `BLOCKED: this patch for ${filepath} contains ${stubHits} function/method ` +
-                `bodies written as literal "{ ... }" instead of real code — that would delete ` +
-                `the actual implementation. The edit was NOT applied. Remember: "// ... existing ` +
+                `${stubReason} The edit was NOT applied. Remember: "// ... existing ` +
                 `code ..." is a comment placeholder for sections you're NOT touching — every ` +
                 `function you actually include in a patch must have its complete, real body. ` +
                 `Re-read the file, then retry with a precise patch containing only the lines ` +
@@ -150,25 +142,14 @@ function checkForCatastrophicOverwrite(toolCall) {
         return null
     }
 
-    if (originalLines < OVERWRITE_GUARD.minOriginalLines) return null
-
     const newContent = findLargestStringArg(args)
-    if (!newContent) return null
-
-    const shrinkRatio = newContent.length / Math.max(originalContent.length, 1)
-    if (shrinkRatio < OVERWRITE_GUARD.maxShrinkRatio) {
-        Logger.warning(
-            `[BRIDGE] 🚫 BLOCKED catastrophic overwrite: ${filepath} ` +
-            `(original ${originalContent.length} chars / ${originalLines} lines -> ` +
-            `proposed ${newContent.length} chars, ratio ${shrinkRatio.toFixed(2)})`
-        )
+    const shrinkReason = checkShrinkRatio(originalContent, newContent, filepath)
+    if (shrinkReason) {
+        Logger.warning(`[BRIDGE] 🚫 ${shrinkReason}`)
         return (
-            `BLOCKED: this would replace ${filepath} (${originalLines} lines, ` +
-            `${originalContent.length} chars) with only ${newContent.length} chars — ` +
-            `that's a ${Math.round((1 - shrinkRatio) * 100)}% reduction, which looks like ` +
-            `a hallucinated/simplified rewrite rather than a real edit. The edit was NOT applied. ` +
-            `Call the read tool on this exact file right now to see its real current content, ` +
-            `then retry with a precise change based on what's actually there.`
+            `${shrinkReason} The edit was NOT applied. Call the read tool on this exact ` +
+            `file right now to see its real current content, then retry with a precise ` +
+            `change based on what's actually there.`
         )
     }
     return null
