@@ -6,6 +6,7 @@
 ## Index
 
 * [Prerequisites](#prerequisites)
+  
   * [Local AI set-up](#local-ai-set-up)
     
 * [Start modes](#start-modes)
@@ -17,6 +18,8 @@
 
   * [Neoforge way](#neoforge-way)
   * [Mineflayer way](#mineflayer-way)
+
+* [STTS](#stts)
 * [VSC integration](#vsc-integration)
 * [VRChat](#vrchat)
 
@@ -133,6 +136,23 @@ All modes are configured through a unified start file (`src/start.js`) that auto
   * **MC_SERVER_PORT**: The port of the server, default 25565.
   * **MC_BOT_USERNAME**: The username of your bot.
   * **MC_AUTH_PASSWORD**: The password your bot will use when attempting to /register and /login
+
+### STTS
+
+* You are gonna need to change a bunch of values in the config:
+ 
+  * **audioMonitorSource**: The microphone/audio input source to monitor. This is system-specific and needs to match the correct source on your machine. Example: `alsa_input.pci-0000_00_1f.3.analog-stereo.99`
+  * **whisperSidecarUrl**: URL of the Whisper/STT server. Example: `http://192.168.18.48:8775/transcribe`
+  * **wakeWords**: The words/variations that should activate the assistant when wake-word detection is enabled. Change these if your assistant uses a different name.
+  * **sileroVadModelPath**: Path to the Silero VAD ONNX model. Make sure this points to the correct location relative to where the STTS process runs.
+  * **tts.engine**: The TTS engine being used. This needs to match the engine you have installed/configured. The current setup uses `edge-tts`.
+  * **tts.edgeVoice**: The voice ID used by Edge TTS. Choose a voice available for your language/accent.
+  * **tts.xttsUrl**: URL of the XTTS server, if using XTTS. Example: `http://192.168.18.48:8790/speak`
+  * **tts.platform**: "GNOME", "KDE" or "WINDOWS".
+  * **tts.sinkName**: The audio output sink/device used for Lily's voice. This is important if the assistant's voice should be routed to a specific virtual or physical audio device. Example: `lily_voice`
+  * **enableWakeWord**: Set this depending on whether you want STTS to wait for a wake word before processing speech.
+
+
 
 ### VSC integration
 
