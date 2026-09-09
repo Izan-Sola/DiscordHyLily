@@ -26,8 +26,23 @@ const __dirname = path.dirname(__filename)
 const execAsync = promisify(exec)
 import { VTSClient } from "../vtubing/VTSClient.js"
 import { isVtubeEnabled } from "../startUtils.js"
-import { getSttsToolConfig } from '../startUtils.js' // adjust path to match your other imports there
+import { getSttsToolConfig } from '../startUtils.js'
 
+// ─── Create and export the Discord client ────────────────────────────────────
+export const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates,
+    ],
+    // Needed so DM channel/message events reliably fire even when the
+    // DM channel isn't already in the client's cache.
+    partials: [Partials.Channel],
+})
+
+// ─── Create and export the Lily AI instance ──────────────────────────────────
 export const ai = new Lily({ model: config.modelName }, null, null, getSttsToolConfig())
 
 // ─── Voice helpers ────────────────────────────────────────────────────────────
@@ -191,7 +206,7 @@ async function extractImagesFromMessage(message) {
     return results
 }
 
-// ─── Transcribe / Speak ───────────────────────────────────────────────────────
+// ─── Transcribe / Speak ─────────────────────────────────────────────────────
 
 export async function transcribe(audioPath) {
     return new Promise((resolve, reject) => {
@@ -519,18 +534,6 @@ export function startVoiceSession(connection, guild, channelId) {
 // ─── Bot setup ────────────────────────────────────────────────────────────────
 
 export async function createBot() {
-    const client = new Client({
-        intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.DirectMessages,
-            GatewayIntentBits.MessageContent,
-            GatewayIntentBits.GuildVoiceStates,
-        ],
-        // Needed so DM channel/message events reliably fire even when the
-        // DM channel isn't already in the client's cache.
-        partials: [Partials.Channel],
-    })
 
     client.once("clientReady", async () => {
         await initLogChannel(client)
@@ -781,5 +784,6 @@ export async function createBot() {
         }
     })
 
+    // Return the client (already exported, but keep for compatibility)
     return client
 }

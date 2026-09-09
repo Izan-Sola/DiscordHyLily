@@ -37,9 +37,7 @@
     "memoryAutoInjectEpisodicEnabled": true,
     "memoryAutoInjectEpisodicK": 1,
     "memoryAutoInjectEpisodicMinScore": 0.65,
-
-
     "toolCallFormat": "xml_tags",
-    "trainingOutputFormat": "sharegpt"
-
+    "trainingOutputFormat": "sharegpt",
+    "discordUserID": "572121744253386792"
 }

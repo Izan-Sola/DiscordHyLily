@@ -8,13 +8,9 @@ import { Logger } from '../../src/utils/Logger.js'
 import { saveFlawlessTurn } from './saveFlawlessTurns.js'
 import { getConfig } from './config.js'
 import { speakToStream } from '../vtubing/youtube/streamTTS.js'
+
 const YOUTUBE_CHANNEL_ID = "youtube"
-// Channel id used for the Minecraft bridge — see getToolsForChannel().
 const MINECRAFT_CHANNEL_ID = "minecraft"
-// Channel id used for the VRChat avatar bridge (vrchatBot/) — see
-// getToolsForChannel(). Only started when this process is run with the
-// 'vrchat' flag (see start.js), but the id is a plain string constant so
-// there's nothing flag-dependent to wire up here.
 const VRCHAT_CHANNEL_ID = "vrchat"
 
 function isMinecraftActionTool(name) {
@@ -26,87 +22,55 @@ const GIF_TOOLS = new Set(["send_gif", "send_meme"])
 export class Lily {
     /**
      * @param {object} options
-     * @param {(type: string, params: object) => void} [mcSend] - sends a
-     *   command to the Minecraft bridge (same function passed into
-     *   startSurvivalLoop). Forwarded to ToolRouter so the
-     *   minecraft_action_* tools can actually act in-world when someone
-     *   asks Lily to do something via chat.
-     * @param {object} [vtsClient] - already-authenticated VTSClient
-     *   connection, forwarded to ToolRouter so trigger_expression works.
-     *   Optional at construction time — wire it later with setVtsClient()
-     *   if the VTS connection isn't ready yet when Lily is first built.
+     * @param {(type: string, params: object) => void} [mcSend]
+     * @param {object} [vtsClient]
+     * @param {object} [sttsConfig]
+     * @param {Function} [onVoiceGif] - callback (gifUrl: string) => void
+     *   called when a GIF is generated via voice assistant channel.
      */
-    constructor(options = {}, mcSend = null, vtsClient = null, sttsConfig = {}) {
-        // this.opts is a getter (defined below) that re-reads config.json
-        // fresh on every access — there's no snapshot to go stale, so
-        // editing and saving the file takes effect on the very next opts
-        // access, no restart needed. `options` passed here become a
-        // permanent per-instance override (Object.assign'd on top of the
-        // live file values) for whichever keys it sets — use it for
-        // one-off/test wiring, not values you plan to keep tuning live.
+    constructor(options = {}, mcSend = null, vtsClient = null, sttsConfig = {}, onVoiceGif = null) {
         this._optsOverride = options
         this.convoHistories = new Map()
         this.rawBuffers = new Map()
         this.channelLocks = new Map()
-        this.channelMessageCounts = new Map()   // channelId -> count
-        this.observeBuffers = new Map()         // channelId -> string[]
-        this.observeParticipants = new Map()    // channelId -> Set<string>
+        this.channelMessageCounts = new Map()
+        this.observeBuffers = new Map()
+        this.observeParticipants = new Map()
         this.mcSend = mcSend
-        // ChatToolExecutor (the only domain with live config-dependent
-        // behavior) reads config.json fresh on its own — nothing to hand
-        // it here. ToolRouter fans calls out to chat/minecraft/vtube by
-        // tool name, letting all three mix freely within a single turn —
-        // see toolRouter.js.
         this.tools = new ToolRouter(mcSend, getStateController, vtsClient, sttsConfig)
         this._resumedIds = new Map()
         this._replayCounts = new Map()
-        // channelId -> { role: "user", content } — the single user message that
-        // STARTED the current turn. Deliberately separate from convoHistories
-        // (which keeps accumulating prior turns): this is what
-        // maybeSaveFlawlessTurn reads so a saved training sample is scoped to
-        // real turn boundaries, not the whole growing conversation.
         this.turnStartMessages = new Map()
-        // channelId -> array of completed FLAWLESS turns, each entry being
-        // that turn's own flat message array: [userMsg, ...scratch,
-        // finalAssistantReply]. Used by maybeSaveFlawlessTurn to build
-        // multi-turn samples when opts.trainingTurnWindow > 1 — see there.
-        // Cleared for a channel whenever a turn comes back flawed, so a
-        // multi-turn bundle never silently skips over an untrustworthy turn.
         this.turnLog = new Map()
-        this.turnAutoMemoryBlocks = new Map()   // channelId -> string | undefined, recomputed each turn
+        this.turnAutoMemoryBlocks = new Map()
+        this._onVoiceGif = onVoiceGif
     }
 
-    // Reads config.json fresh (via getConfig()) on every access and layers
-    // this instance's constructor-time overrides on top. NOTE: maxConvoMessages
-    // / maxMinecraftConvoMessages are read once per channel, at the moment
-    // that channel's ConversationHistory is first created (see getHistory
-    // below) — a live edit to either value takes effect for any NEW channel,
-    // but won't resize a history object a currently-active channel is
-    // already using.
+    // Helper to call the voice‑GIF callback
+    _handleVoiceGif(channelId, gifUrl) {
+        if (channelId === VOICE_ASSISTANT_CHANNEL_ID && gifUrl && this._onVoiceGif) {
+            try {
+                this._onVoiceGif(gifUrl)
+            } catch (err) {
+                Logger.error(`Voice GIF callback failed: ${err.message}`, "VOICE GIF")
+            }
+        }
+    }
+
     get opts() {
         return Object.assign(getConfig(), this._optsOverride)
     }
-
 
     getObserveBuffer(channelId) {
         if (!this.observeBuffers.has(channelId)) this.observeBuffers.set(channelId, [])
         return this.observeBuffers.get(channelId)
     }
 
-    /**
-     * Wire (or replace) the Minecraft bridge sender after construction —
-     * useful if mcSend isn't available yet when Lily is first built.
-     */
     setMcSend(mcSend) {
         this.mcSend = mcSend
         this.tools.setMcSend(mcSend)
     }
 
-    /**
-     * Wire (or replace) the VTube Studio connection after construction —
-     * call this once the VTSClient has finished authenticating. Safe to
-     * call again later (e.g. after a reconnect) to swap in a fresh client.
-     */
     setVtsClient(vtsClient) {
         this.tools.setVtsClient(vtsClient)
     }
@@ -132,13 +96,6 @@ export class Lily {
         return this.rawBuffers.get(channelId)
     }
 
-    // Only the Minecraft bridge channel gets minecraft_action_* tools —
-    // every other channel (Discord, etc.) never even sees them in the tool
-    // list, so the model structurally cannot call them there regardless of
-    // how it interprets the system prompt's "you can't perform in-game
-    // actions". Vtube tools (trigger_expression) are included either way —
-    // see ToolRouter's tools/nonMinecraftTools getters — so expressions
-    // mix freely with either chat tools or minecraft tools.
     getToolsForChannel(channelId) {
         if (channelId === MINECRAFT_CHANNEL_ID) return this.tools.tools
         if (channelId === VRCHAT_CHANNEL_ID) return this.tools.vrchatTools
@@ -186,12 +143,6 @@ export class Lily {
         return this.getRawBuffer(channelId).get()
     }
 
-    // suppressActionReminder: once an in-world action has already been dispatched
-    // this turn, we stop re-injecting the "call the matching tool now" nudge on
-    // every subsequent loop iteration/completion — that reminder was previously
-    // rebuilt from scratch and reattached to the same original user message on
-    // every single loop, which kept pressuring the model to find *something*
-    // else to call even after the requested action was already done.
     buildMessagesForOllama(channelId, systemPromptOverride = null, opts = {}) {
         const { skipHistory = false, skipRawContext = false, suppressActionReminder = false } = opts
         const messages = []
@@ -267,7 +218,6 @@ export class Lily {
             const summary = data.choices?.[0]?.message?.content?.trim()
             if (!summary) return
 
-            // summary drives the embedding/search; raw is what comes back on a hit
             await this.tools.addEpisodicMemory({
                 summary,
                 raw: lines.join("\n"),
@@ -340,12 +290,6 @@ export class Lily {
                 repeat_last_n: this.opts.repeat_last_n,
                 max_tokens: overrides.max_tokens ?? this.opts.max_tokens,
                 stop: overrides.stop ?? ["</answer>", "<|user|>", "<|endoftext|>"],
-                // CHANGE 1: this.opts.think was read from config.json but never
-                // put on the payload — it did nothing. Also: Ollama's
-                // /v1/chat/completions endpoint mostly ignores a bare "think"
-                // field for reasoning control; the field it actually reads is
-                // reasoning_effort ("none"/"low"/"medium"/"high"). Sending both
-                // covers you whether your Ollama build honors think or not.
                 reasoning_effort: this.opts.think === false ? "none" : (this.opts.think ?? "none"),
                 think: this.opts.think ?? false,
             }
@@ -356,12 +300,6 @@ export class Lily {
             const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, payload, { timeout: this.opts.ollamaTimeout })
             const msg = data.choices?.[0]?.message ?? null
 
-            // CHANGE 2: on some Ollama versions/models, when reasoning is cut
-            // off mid-stream or the model front-loads planning text, everything
-            // ends up in `reasoning`/`reasoning_content` instead of `content` —
-            // content comes back empty even though the model "said" something.
-            // Falling back to that field means a completion never gets treated
-            // as empty when there's actually text sitting right there.
             if (msg && !msg.content?.trim() && (msg.reasoning_content || msg.reasoning)) {
                 Logger.warning(`content empty, model text landed in reasoning field instead — using it as fallback`, "OLLAMA FALLBACK")
                 msg.content = msg.reasoning_content ?? msg.reasoning
@@ -380,30 +318,7 @@ export class Lily {
             return null
         }
     }
-    // PATCH for Lily.js — replace parseEmbeddedToolCalls with this version.
-    //
-    // Qwen3.5 was trained with the "qwen3_coder" tool-call format, not the
-    // Hermes-JSON format Qwen3-8B used. That format looks like:
-    //
-    //   <tool_call>
-    //   <function=tool_name>
-    //   <parameter=arg_name>
-    //   value
-    //   </parameter>
-    //   </function>
-    //   </tool_call>
-    //
-    // ...instead of:
-    //
-    //   <tool_call>
-    //   {"name": "tool_name", "arguments": {"arg_name": "value"}}
-    //   </tool_call>
-    //
-    // Native msg.tool_calls (via the `tools` field on the request) will keep
-    // working as before — this only matters for the embedded-text fallback path,
-    // which is exactly where your "MALFORMED" logs were coming from: the model
-    // falling back to its own native dialect instead of the one your regex
-    // expected.
+
     parseEmbeddedToolCalls(content) {
         const blocks = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
         const calls = []
@@ -411,7 +326,6 @@ export class Lily {
         for (const block of blocks) {
             const inner = block[1].trim()
 
-            // Dialect 1: old Hermes-JSON format — {"name": ..., "arguments": {...}}
             if (inner.startsWith("{")) {
                 try {
                     const parsed = JSON.parse(inner)
@@ -419,11 +333,9 @@ export class Lily {
                     if (typeof args === "string") try { args = JSON.parse(args) } catch { args = {} }
                     calls.push({ name: parsed.name, args })
                     continue
-                } catch { /* fall through and try XML dialect below, in case of mixed output */ }
+                } catch { /* fall through */ }
             }
 
-            // Dialect 2: Qwen3.5 native qwen3_coder format —
-            // <function=name><parameter=key>value</parameter>...</function>
             const fnMatch = inner.match(/<function=([^>]+)>([\s\S]*?)<\/function>/)
             if (fnMatch) {
                 const name = fnMatch[1].trim()
@@ -433,89 +345,16 @@ export class Lily {
                 for (const p of paramMatches) {
                     const key = p[1].trim()
                     let value = p[2].trim()
-                    // Parameters often come through as plain strings even for
-                    // numbers/booleans/objects — try to recover the real type,
-                    // fall back to the raw string if it isn't valid JSON.
                     try { value = JSON.parse(value) } catch { /* keep as string */ }
                     args[key] = value
                 }
                 calls.push({ name, args })
                 continue
             }
-
-            // Neither dialect matched — genuinely malformed/truncated, skip it
-            // silently rather than crashing; caller already treats an empty
-            // calls[] as "malformed" and reprompts.
         }
 
         return calls
     }
-
-    // Two independent checks gate every non-minecraft_action tool call:
-    //   1. toolsUsedThisTurn (Map<toolName, count>) — flat cap of
-    //      opts.maxUsesPerTool calls to a given tool name per turn,
-    //      regardless of arguments. Replaces the old ad-hoc special-casing
-    //      of send_gif / send_meme / addto_episodic_memory with one rule,
-    //      and closes the hole where a model dodged a per-tool cap by
-    //      alternating between addto_memory_database / update_memory_database
-    //      / remove_memory_database indefinitely.
-    //   2. tracker (ToolCallTracker) — blocks calling the exact same
-    //      tool+args pair more than opts.maxToolRepeats times, catching a
-    //      model stuck re-issuing an identical call even if it's still
-    //      within the flat count budget.
-    //
-    // minecraft_action tools get their OWN flat cap of 1 per distinct action
-    // name per turn (not opts.maxUsesPerTool, and no tracker repeat-check —
-    // repeated identical in-world actions like re-attacking the same mob
-    // across turns are legitimate and are instead bounded by the early-exit
-    // in runToolLoop, see didMinecraftAction there). Without this cap, a
-    // model that calls e.g. break, then in a LATER loop iteration calls
-    // stop, then eat, then swap, then attack, then follow — none of which
-    // repeats a prior tool name — sails through unblocked, since a same-name
-    // repeat check can't catch a model inventing a *different* unrequested
-    // action each round. The early-exit fix in runToolLoop is what actually
-    // stops those later rounds from happening at all; this cap is just a
-    // backstop in case a single model response tries to call the same
-    // minecraft action tool twice.
-    // async runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, pushFn) {
-    //     const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
-    //     const cap = isMinecraftActionTool(name)
-    //         ? this.opts.maxUsesPerMinecraftAction
-    //         : this.opts.maxUsesPerTool
-
-    //     if (usesSoFar >= cap) {
-    //         Logger.warning(`${name} already used ${usesSoFar}x this turn (cap: ${cap})`, "BLOCKED")
-    //         this.tools.markFlawed('tool_cap_exceeded')
-    //         pushFn(isMinecraftActionTool(name)
-    //             ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
-    //             : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
-    //         return null
-    //     }
-
-    //     if (!isMinecraftActionTool(name)) {
-    //         const repeatBlock = tracker.check(name, args)
-    //         if (repeatBlock) {
-    //             this.tools.markFlawed('tool_repeat_blocked')
-    //             pushFn(repeatBlock)
-    //             return null
-    //         }
-    //     }
-
-    //     toolsUsedThisTurn.set(name, usesSoFar + 1)
-
-    //     const result = await this.tools.execute(name, args)
-
-    //     let gifUrl = null
-    //     if (GIF_TOOLS.has(name)) {
-    //         try {
-    //             const parsed = JSON.parse(result)
-    //             if (parsed.status === "ok") gifUrl = parsed.url
-    //         } catch { }
-    //     }
-
-    //     pushFn(result)
-    //     return gifUrl
-    // }
 
     async resumeToolLoop(channelId, toolResults, systemPromptOverride = null, opts = {}, images = []) {
         return this.withChannelLock(channelId, async () => {
@@ -536,16 +375,6 @@ export class Lily {
                 this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tr.tool_call_id, content })
             }
 
-            // NOTE: runToolLoop below starts a fresh `scratch = []`, so a turn
-            // that got paused for a foreign tool handoff (see foreignCalls in
-            // runToolLoop) and is now resuming here will save WITHOUT the
-            // pre-pause assistant tool_calls message / foreign tool result in
-            // its flawless-turn scratch — that portion only lives in
-            // convoHistories, not in what maybeSaveFlawlessTurn reads. Was
-            // already the case before the single/multi-turn rework; flagging
-            // it here since it's easy to miss. Only matters for channels that
-            // actually use foreign tool handoff (e.g. the VS Code/Continue
-            // bridge), not plain Discord/Minecraft chat.
             const result = await this.runToolLoop(channelId, systemPromptOverride, opts, images)
             for (const tr of toolResults) this._resumedIds.set(tr.tool_call_id, result)
 
@@ -554,36 +383,6 @@ export class Lily {
         })
     }
 
-    // Shared by the two success paths (runToolLoop and finishWithoutTools).
-    // Builds a training sample scoped by opts.trainingTurnWindow:
-    //
-    //   trainingTurnWindow === 1 (default): single-turn sample, saved every
-    //   turn — system prompt -> this turn's user message -> this turn's
-    //   tool-call/tool-result scratch -> this turn's final reply.
-    //
-    //   trainingTurnWindow === N > 1: BATCH-AND-FLUSH, not a sliding window.
-    //   Turns accumulate in turnLog un-saved until exactly N consecutive
-    //   flawless turns have piled up; only then is ONE sample written
-    //   (system + turn[1] + turn[2] + ... + turn[N]) and the log cleared to
-    //   start the next batch from zero. This deliberately does NOT save at
-    //   turn 1, then again at 1+2, then again at 1+2+3 — that was the
-    //   earlier (buggy) sliding-window version and produced heavily
-    //   overlapping near-duplicate samples, which is exactly the kind of
-    //   redundant-save problem this whole rework exists to avoid. With N=3
-    //   you get one save on turn 3 (containing turns 1-3), one save on turn
-    //   6 (containing turns 4-6), etc. — no turn ever appears in more than
-    //   one saved sample.
-    //
-    //   A flawed/empty-reply turn clears the in-progress batch entirely
-    //   (partial progress is discarded, not flushed early) so a batch never
-    //   stitches across a turn whose content isn't trustworthy training
-    //   data.
-    //
-    // Deliberately does NOT call buildMessagesForOllama / getConvoHistory in
-    // either mode — those pull the whole accumulated conversation, which is
-    // what caused near-duplicate samples in the original version (the same
-    // growing history re-saved on every single message, differing only in
-    // the newest turn).
     async maybeSaveFlawlessTurn(channelId, systemPromptOverride, scratch, finalReplyText) {
         if (!this.tools.turnFlawless) {
             this.turnLog.delete(channelId)
@@ -603,7 +402,6 @@ export class Lily {
         const log = this.turnLog.get(channelId) ?? []
         log.push(turnMessages)
 
-        // Batch isn't full yet — buffer it and wait, don't save anything.
         if (log.length < windowSize) {
             this.turnLog.set(channelId, log)
             return
@@ -612,7 +410,6 @@ export class Lily {
         try {
             const baseMessages = [{ role: "system", content: systemPromptOverride ?? SYSTEM_PROMPT }]
             const fullConversation = [...baseMessages, ...log.flat()]
-            // Not awaited on purpose — this shouldn't add latency to the user-facing reply.
             saveFlawlessTurn({ channelId, messages: fullConversation }).catch(err => {
                 Logger.error(err.message, "FLAWLESS SAVE")
             })
@@ -620,25 +417,14 @@ export class Lily {
             Logger.error(err.message, "FLAWLESS SAVE")
         }
 
-        // Batch flushed — start the next one from scratch.
         this.turnLog.delete(channelId)
     }
 
-    // Final fallback used both when the tool-loop budget (maxToolLoops) runs out,
-    // AND (new) immediately after a minecraft_action tool has been dispatched —
-    // see didMinecraftAction in runToolLoop. Forces one last completion with
-    // tools disabled so the model has to produce a normal in-character reply
-    // instead of being offered another 14 rounds of "what else could I call".
     async finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl) {
         const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, { ...opts, suppressActionReminder: true })
         let attemptScratch = [...scratch]
         const MAX_RETRIES = 6
 
-        // Stricter than the normal chat-turn defaults: stop the instant the model
-        // starts down the <tool_call> path again (tools are already off, so any
-        // attempt is wasted generation, not a valid response), and push the
-        // repeat penalty harder since the context is now full of the model's own
-        // recent tool-call spam that it's prone to imitating.
         const overrides = {
             stop: ["</answer>", "<|user|>", "<|endoftext|>", "<tool_call>"],
             repeat_penalty: 1.3,
@@ -664,7 +450,7 @@ export class Lily {
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY - BUDGET EXHAUSTED")
                 if (channelId === YOUTUBE_CHANNEL_ID) speakToStream(content).catch(err => Logger.error(`TTS failed: ${err.message}`, "TTS"))
-                return { text: content, gifUrl: pendingGifUrl }
+                this._handleVoiceGif(channelId, pendingGifUrl)
                 return { text: content, gifUrl: pendingGifUrl }
             }
 
@@ -675,57 +461,56 @@ export class Lily {
         Logger.error(`Exhausted ${MAX_RETRIES} retries without a natural reply, using scripted fallback`, "BUDGET FALLBACK")
         const fallback = "... (•ᴗ•)"
         this.pushToConvoHistory(channelId, { role: "assistant", content: fallback })
+        this._handleVoiceGif(channelId, pendingGifUrl)
         return { text: fallback, gifUrl: pendingGifUrl }
     }
-    // Shared by both the native tool_calls path and the embedded <tool_call>
-    // path below — runs each call, records it for the silent-effect history
-    // marker if applicable, and pushes the result via the caller's pushFn
-    // (which differs between the two formats: role:"tool" vs role:"user").
-async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
-    let pendingGifUrl = null
 
-    for (const { name, args } of calls) {
-        const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
-        const cap = isMinecraftActionTool(name)
-            ? this.opts.maxUsesPerMinecraftAction
-            : this.opts.maxUsesPerTool
+    async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
+        let pendingGifUrl = null
 
-        if (usesSoFar >= cap) {
-            Logger.warning(`${name} already used ${usesSoFar}x this turn (cap: ${cap})`, "BLOCKED")
-            this.tools.markFlawed('tool_cap_exceeded')
-            pushFn(name, isMinecraftActionTool(name)
-                ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
-                : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
-            if (this.tools.shouldHardStop()) break
-            continue
-        }
+        for (const { name, args } of calls) {
+            const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
+            const cap = isMinecraftActionTool(name)
+                ? this.opts.maxUsesPerMinecraftAction
+                : this.opts.maxUsesPerTool
 
-        if (!isMinecraftActionTool(name)) {
-            const repeatBlock = tracker.check(name, args)
-            if (repeatBlock) {
-                this.tools.markFlawed('tool_repeat_blocked')
-                pushFn(name, repeatBlock)
+            if (usesSoFar >= cap) {
+                Logger.warning(`${name} already used ${usesSoFar}x this turn (cap: ${cap})`, "BLOCKED")
+                this.tools.markFlawed('tool_cap_exceeded')
+                pushFn(name, isMinecraftActionTool(name)
+                    ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
+                    : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
                 if (this.tools.shouldHardStop()) break
                 continue
             }
+
+            if (!isMinecraftActionTool(name)) {
+                const repeatBlock = tracker.check(name, args)
+                if (repeatBlock) {
+                    this.tools.markFlawed('tool_repeat_blocked')
+                    pushFn(name, repeatBlock)
+                    if (this.tools.shouldHardStop()) break
+                    continue
+                }
+            }
+
+            toolsUsedThisTurn.set(name, usesSoFar + 1)
+            const result = await this.tools.execute(name, args, { channelId })
+
+            if (GIF_TOOLS.has(name)) {
+                try {
+                    const parsed = JSON.parse(result)
+                    if (parsed.status === "ok") pendingGifUrl = parsed.url
+                } catch { }
+            }
+
+            pushFn(name, result)
+            if (this.tools.shouldHardStop()) break
         }
 
-        toolsUsedThisTurn.set(name, usesSoFar + 1)
-        const result = await this.tools.execute(name, args, { channelId })
-
-        if (GIF_TOOLS.has(name)) {
-            try {
-                const parsed = JSON.parse(result)
-                if (parsed.status === "ok") pendingGifUrl = parsed.url
-            } catch { }
-        }
-
-        pushFn(name, result)
-        if (this.tools.shouldHardStop()) break
+        return pendingGifUrl
     }
 
-    return pendingGifUrl
-}
     injectPendingScreenshots(channelId, scratch) {
         if (channelId !== VOICE_ASSISTANT_CHANNEL_ID) return
         const pending = this.tools.takePendingImages()
@@ -733,6 +518,7 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
         const images = pending.map(img => ({ mimeType: img.mediaType, base64: img.base64 }))
         scratch.push({ role: "user", content: this.buildUserContent("", images) })
     }
+
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
         const baseTools = this.getToolsForChannel(channelId)
@@ -759,7 +545,10 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
             }
 
             const msg = await this.sendToOllama(messages, foreignTools, false, baseTools)
-            if (!msg) return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
+            if (!msg) {
+                this._handleVoiceGif(channelId, pendingGifUrl)
+                return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
+            }
 
             const content = (msg.content ?? "").trim()
 
@@ -773,6 +562,7 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
                     }
                     const single = foreignCalls[0]
                     this.pushToConvoHistory(channelId, { role: "assistant", content: msg.content ?? "", tool_calls: [single] })
+                    this._handleVoiceGif(channelId, pendingGifUrl)
                     return { text: msg.content ?? "", gifUrl: null, tool_calls: [single] }
                 }
 
@@ -794,7 +584,7 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
                     }
                 )
                 if (gif) pendingGifUrl = gif
-                this.injectPendingScreenshots(channelId, scratch) 
+                this.injectPendingScreenshots(channelId, scratch)
 
                 if (this.tools.shouldHardStop()) {
                     Logger.warning(`Tool budget/limit exhausted this turn, forcing final reply`, "HARD STOP")
@@ -819,9 +609,9 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
                         channelId, calls, tracker, toolsUsedThisTurn,
                         (_name, text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
                     )
-                    
+
                     if (gif) pendingGifUrl = gif
-                    this.injectPendingScreenshots(channelId, scratch) 
+                    this.injectPendingScreenshots(channelId, scratch)
 
                     if (this.tools.shouldHardStop()) {
                         Logger.warning(`Tool budget/limit exhausted this turn, forcing final reply`, "HARD STOP")
@@ -868,10 +658,12 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY")
                 if (channelId === YOUTUBE_CHANNEL_ID) speakToStream(content).catch(err => Logger.error(`TTS failed: ${err.message}`, "TTS"))
+                this._handleVoiceGif(channelId, pendingGifUrl)
                 return { text: content, gifUrl: pendingGifUrl }
             }
 
             Logger.error(`No content`, "EMPTY")
+            this._handleVoiceGif(channelId, pendingGifUrl)
             return { text: "I'm not sure about that one!", gifUrl: null }
         }
 
@@ -909,13 +701,9 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
         const { skipped, result } = await this.tryChannelLock(channelId, async () => {
             const userMessage = { role: "user", content: clean || "[sent an image]" }
             this.pushToConvoHistory(channelId, userMessage)
-            // Snapshot of just this turn's triggering user message — see
-            // maybeSaveFlawlessTurn for why this is kept separate from the
-            // full convoHistories.
             this.turnStartMessages.set(channelId, userMessage)
 
             this.tools.resetTurn()
-            // passaive memory injection
             const autoMemoryBlock = await this.tools.autoInjectMemory(clean)
             if (autoMemoryBlock) this.turnAutoMemoryBlocks.set(channelId, autoMemoryBlock)
             else this.turnAutoMemoryBlocks.delete(channelId)
@@ -947,12 +735,6 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
         return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts, images)
     }
 
-    // systemPromptOverride defaults to null (old behavior: falls back to
-    // SYSTEM_PROMPT inside handleMessage/buildMessagesForOllama) so
-    // existing Discord/Minecraft callers are unaffected. VRChat's ambient
-    // "butt-in" commentary passes its own addendum-bearing prompt (see
-    // buildVrchatSystemPrompt(true) in prompts.js) since its silence-by-
-    // default framing doesn't apply to Discord's use of this same path.
     buttIn(channelId, rawMessage, systemPromptOverride = null) {
         return this.handleMessage(channelId, rawMessage, "BUTT IN", systemPromptOverride)
     }
