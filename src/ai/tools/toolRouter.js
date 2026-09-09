@@ -1,83 +1,122 @@
+// toolRouter.js
 import { Logger } from '../../utils/Logger.js'
 import { ChatToolExecutor, CHAT_TOOLS, CHAT_TOOL_NAMES } from './chatTools.js'
 import { MinecraftToolExecutor, MINECRAFT_TOOL_NAMES } from './minecraftTools.js'
 import { VtubeToolExecutor, VTUBE_TOOL_NAMES } from './vtubeTools.js'
 import { VrchatToolExecutor, VRCHAT_TOOL_NAMES } from './vrchatTools.js'
 import { SttsToolExecutor, STTS_TOOL_NAMES } from './sttsTools.js'
+import { BrowserToolExecutor, BROWSER_TOOL_NAMES } from './browserTools.js'
 
-// Only this channel ever sees the STTS tools. Discord, Minecraft, VRChat
-// etc never do, even if the process was started with stts/pidev flags -
-// a text message must never be able to trigger a screen capture or a
-// shell-out to Pi.
 const VOICE_ASSISTANT_CHANNEL = 'voiceAssistant'
 
 class ToolRouter {
+    /**
+     * @param {object} deps - external dependencies
+     * @param {Function} deps.mcSend - Minecraft send function (optional)
+     * @param {Function} deps.getStateController - Minecraft state controller getter
+     * @param {object} deps.vtsClient - VTube Studio client (optional)
+     * @param {object} deps.sttsConfig - { enabled, pidevEnabled }
+     * @param {object} deps.flags - tool enablement flags from runConfig
+     *   { minecraft: boolean, vtube: boolean, vrchat: boolean, stts: boolean, browser: boolean }
+     */
+    constructor({ mcSend = null, getStateController = null, vtsClient = null, sttsConfig = {}, flags = {} }) {
+        // Destructure flags with defaults
+        const {
+            minecraft = false,
+            vtube = false,
+            vrchat = false,
+            stts = false,
+            browser = false,
+        } = flags
 
-    constructor(mcSend = null, getStateController = null, vtsClient = null, sttsConfig = {}) {
+        // Always create chat (core)
         this.chat = new ChatToolExecutor()
-        this.minecraft = new MinecraftToolExecutor(mcSend, getStateController)
-        this.vtube = new VtubeToolExecutor(vtsClient)
-        this.vrchat = new VrchatToolExecutor()
-        this.stts = new SttsToolExecutor(sttsConfig.enabled, sttsConfig.pidevEnabled)
 
+        // Conditionally create executors
+        this.minecraft = minecraft ? new MinecraftToolExecutor(mcSend, getStateController) : null
+        this.vtube = vtube ? new VtubeToolExecutor(vtsClient) : null
+        this.vrchat = vrchat ? new VrchatToolExecutor() : null
+        this.stts = stts ? new SttsToolExecutor(sttsConfig.enabled, sttsConfig.pidevEnabled) : null
+        this.browser = browser ? new BrowserToolExecutor() : null
+
+        // Build name→executor map only for enabled executors
         this._byName = new Map()
-        for (const executor of [this.chat, this.minecraft, this.vtube, this.vrchat, this.stts]) {
+        const executors = [this.chat]
+        if (this.minecraft) executors.push(this.minecraft)
+        if (this.vtube) executors.push(this.vtube)
+        if (this.vrchat) executors.push(this.vrchat)
+        if (this.stts) executors.push(this.stts)
+        if (this.browser) executors.push(this.browser)
+
+        for (const executor of executors) {
             for (const name of executor.toolNames) {
                 this._byName.set(name, executor)
             }
         }
     }
 
-    get mcSend() { return this.minecraft.mcSend }
-    set mcSend(fn) { this.minecraft.setMcSend(fn) }
-    setMcSend(fn) { this.minecraft.setMcSend(fn) }
+    // ---- setters (preserved) ----
+    get mcSend() { return this.minecraft?.mcSend ?? null }
+    set mcSend(fn) { if (this.minecraft) this.minecraft.setMcSend(fn) }
+    setMcSend(fn) { this.mcSend = fn }
 
-    setVtsClient(vtsClient) { this.vtube.setVtsClient(vtsClient) }
-    refreshExpressions() { return this.vtube.refreshExpressions() }
-    get vtubeEnabled() { return this.vtube.isEnabled }
+    setVtsClient(vtsClient) { if (this.vtube) this.vtube.setVtsClient(vtsClient) }
+    setBrowserClient(client) { if (this.browser) this.browser.setClient(client) }
+    refreshExpressions() { return this.vtube ? this.vtube.refreshExpressions() : Promise.resolve() }
+    get vtubeEnabled() { return !!this.vtube }
 
+    // ---- core methods (delegated) ----
     resetTurn() { this.chat.resetTurn() }
     shouldHardStop() { return this.chat.shouldHardStop() }
     markFlawed(reason) { this.chat.markFlawed(reason) }
     recordNarration() { return this.chat.recordNarration() }
     get turnFlawless() { return this.chat.turnFlawless }
-
     autoInjectMemory(queryText) { return this.chat.autoInjectMemory(queryText) }
     addEpisodicMemory(payload) { return this.chat.addEpisodicMemory(payload) }
 
+    // ---- Tool lists – only include enabled executors ----
     get tools() {
-        return [...this.chat.tools, ...this.minecraft.tools, ...this.vtube.tools]
+        const base = [...this.chat.tools]
+        if (this.minecraft) base.push(...this.minecraft.tools)
+        if (this.vtube) base.push(...this.vtube.tools)
+        return base
     }
 
     get nonMinecraftTools() {
-        return [...this.chat.tools, ...this.vtube.tools]
+        const base = [...this.chat.tools]
+        if (this.vtube) base.push(...this.vtube.tools)
+        return base
     }
 
     get vrchatTools() {
-        return [...this.chat.tools, ...this.vtube.tools, ...this.vrchat.tools]
+        const base = [...this.chat.tools]
+        if (this.vtube) base.push(...this.vtube.tools)
+        if (this.vrchat) base.push(...this.vrchat.tools)
+        return base
     }
 
-    // Chat + VTube expressions + whichever STTS tools this process has
-    // active (get_screenshot always, run_system_command only with pidev
-    // too). Only ever hand this list out for the voiceAssistant channel -
-    // see execute() for the matching runtime guard.
     get voiceAssistantTools() {
-        return [...this.chat.tools, ...this.vtube.tools, ...this.stts.tools]
+        const base = [...this.chat.tools]
+        if (this.vtube) base.push(...this.vtube.tools)
+        if (this.stts) base.push(...this.stts.tools)
+        if (this.browser) base.push(...this.browser.tools)
+        return base
     }
 
+    // ---- tool name checks (safe) ----
     isChatTool(name) { return CHAT_TOOL_NAMES.has(name) }
-    isMinecraftTool(name) { return MINECRAFT_TOOL_NAMES.has(name) }
-    isVtubeTool(name) { return VTUBE_TOOL_NAMES.has(name) }
-    isVrchatTool(name) { return VRCHAT_TOOL_NAMES.has(name) }
-    isSttsTool(name) { return STTS_TOOL_NAMES.has(name) }
+    isMinecraftTool(name) { return this.minecraft && MINECRAFT_TOOL_NAMES.has(name) }
+    isVtubeTool(name) { return this.vtube && VTUBE_TOOL_NAMES.has(name) }
+    isVrchatTool(name) { return this.vrchat && VRCHAT_TOOL_NAMES.has(name) }
+    isSttsTool(name) { return this.stts && STTS_TOOL_NAMES.has(name) }
+    isBrowserTool(name) { return this.browser && BROWSER_TOOL_NAMES.has(name) }
 
-    // Drains screenshots captured since the last drain. Call after the
-    // tool-execution pass, only on the voiceAssistant channel, and merge
-    // the result into the images sent with the next model call.
+    // ---- screenshot drain (only if stts enabled) ----
     takePendingImages() {
-        return this.stts.takePendingImages()
+        return this.stts ? this.stts.takePendingImages() : []
     }
 
+    // ---- execute – only if executor exists ----
     async execute(name, args, context = {}) {
         const executor = this._byName.get(name)
         if (!executor) {
@@ -86,14 +125,12 @@ class ToolRouter {
             return JSON.stringify({ status: "error", message: `Unknown tool: ${name}` })
         }
 
-        // Defense in depth: voiceAssistantTools is the only list that
-        // ever includes these, but if a call for one shows up from
-        // anywhere else, refuse it here too rather than trusting the
-        // tool list alone. context.channelId must be explicitly passed
-        // as 'voiceAssistant' - it's fail-closed by default.
-        if (this.isSttsTool(name) && context.channelId !== VOICE_ASSISTANT_CHANNEL) {
+        // Guard STTS and browser tools to voice channel
+        const isStts = this.stts && this.isSttsTool(name)
+        const isBrowser = this.browser && this.isBrowserTool(name)
+        if ((isStts || isBrowser) && context.channelId !== VOICE_ASSISTANT_CHANNEL) {
             Logger.warning(`Blocked "${name}" outside voiceAssistant channel (channelId=${context.channelId})`, "TOOL")
-            this.chat.markFlawed('stts_tool_wrong_channel')
+            this.chat.markFlawed(isStts ? 'stts_tool_wrong_channel' : 'browser_tool_wrong_channel')
             return JSON.stringify({ status: "error", message: `${name} is only available in voice conversations.` })
         }
 
@@ -107,6 +144,7 @@ const ALL_TOOL_NAMES = new Set([
     ...VTUBE_TOOL_NAMES,
     ...VRCHAT_TOOL_NAMES,
     ...STTS_TOOL_NAMES,
+    ...BROWSER_TOOL_NAMES,
 ])
 
 export { ToolRouter, ALL_TOOL_NAMES, VOICE_ASSISTANT_CHANNEL }

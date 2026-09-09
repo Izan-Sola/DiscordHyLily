@@ -27,7 +27,7 @@ const execAsync = promisify(exec)
 import { VTSClient } from "../vtubing/VTSClient.js"
 import { isVtubeEnabled } from "../startUtils.js"
 import { getSttsToolConfig } from '../startUtils.js'
-
+import { ai } from '../start.js' // Lily instance
 // ─── Create and export the Discord client ────────────────────────────────────
 export const client = new Client({
     intents: [
@@ -43,7 +43,7 @@ export const client = new Client({
 })
 
 // ─── Create and export the Lily AI instance ──────────────────────────────────
-export const ai = new Lily({ model: config.modelName }, null, null, getSttsToolConfig())
+// inside discord/bot.js or wherever Lily is instantiated
 
 // ─── Voice helpers ────────────────────────────────────────────────────────────
 

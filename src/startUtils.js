@@ -1,4 +1,4 @@
-const KNOWN_FLAGS = ['discord', 'modded', 'mineflayer', 'bending', 'vtube', 'vrchat', 'coding', 'pidev', 'stts'];
+const KNOWN_FLAGS = ['discord', 'modded', 'mineflayer', 'bending', 'vtube', 'vrchat', 'coding', 'pidev', 'stts', 'browser']; // <-- new
 
 export function parseFlags(argv = process.argv.slice(2)) {
     return new Set(
@@ -22,7 +22,8 @@ export function getConfigFromFlags(flags = parseFlags()) {
         vrchat: flags.has('vrchat'),
         coding: flags.has('coding'),
         pidev: flags.has('pidev'),
-        stts: flags.has('stts'),   // <-- new
+        stts: flags.has('stts'),
+        browser: flags.has('browser'),   // <-- new
     }
 }
 
@@ -33,9 +34,12 @@ export function describeConfig(config) {
     if (config.vrchat) label += '-vrchat'
     if (config.coding) label += '-coding'
     if (config.pidev) label += '-pidev'
-    if (config.stts) label += '-stts'   // <-- new
+    if (config.stts) label += '-stts'
+    if (config.browser) label += '-browser'   // <-- new
     return label
 }
+
+
 export function getSttsToolConfig(flags = parseFlags()) {
     return {
         enabled: flags.has('stts'),
@@ -64,8 +68,11 @@ export function isCodingEnabled(flags = parseFlags()) {
 export function isPidevEnabled(flags = parseFlags()) {
     return flags.has('pidev')
 }
-export function isSttsEnabled(flags = parseFlags()) {   // <-- new
+export function isSttsEnabled(flags = parseFlags()) {   
     return flags.has('stts')
+}
+export function isBrowserEnabled(flags = parseFlags()) {  
+    return flags.has('browser')
 }
 
 export function getToolConfig(runConfig = {}) {

@@ -1,6 +1,6 @@
 import { stt, tts } from '../STTS/index.js';
 import { SYSTEM_PROMPT } from '../ai/prompts.js';
-import { ai } from '../discord/bot.js';          // Lily instance
+import { ai } from '../start.js'         // Lily instance
 import { client } from '../discord/bot.js';      // Discord client (must be exported)
 import { getConfig } from '../ai/config.js';     // for discordUserID
 import { VOICE_ASSISTANT_CHANNEL_ID } from '../ai/Lily.js';

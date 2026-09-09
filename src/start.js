@@ -1,14 +1,15 @@
 // start.js
 import 'dotenv/config'
-import { createBot, ai } from "./discord/bot.js"
+import { createBot } from "./discord/bot.js"
 import { config } from "./utils/config.js"
 import { Logger } from "./utils/Logger.js"
 import { parseFlags, getConfigFromFlags, describeConfig, isVtubeEnabled, isModdedEnabled, isMineflayerEnabled } from "./startUtils.js"
-import * as stts from './STTS/index.js'                           // <-- changed
+import * as stts from './STTS/index.js'
 import { startVoiceAssistant, stopVoiceAssistant } from './voiceAssistant/index.js'
+import { Lily } from './ai/Lily.js'
 
+// ---------- 1. Parse flags & build config ----------
 const flags = parseFlags()
-
 let runConfig
 try {
     runConfig = getConfigFromFlags(flags)
@@ -17,7 +18,7 @@ try {
     process.exit(1)
 }
 
-const { backend, vtube, discord: isDiscordEnabled, vrchat: isVrchatEnabled, coding: isCodingEnabled, pidev: isPidevEnabled } = runConfig
+const { backend, vtube, discord: isDiscordEnabled, vrchat: isVrchatEnabled, coding: isCodingEnabled, pidev: isPidevEnabled, browser: isBrowserEnabled } = runConfig
 
 if (flags.has('bending') && backend !== 'modded') {
     Logger.warning("'bending' flag has no effect without 'modded' - ignoring", "STARTUP")
@@ -32,11 +33,35 @@ Logger.info(`  • Continue.dev coding bridge: ${isCodingEnabled ? '✅ Enabled'
 Logger.info(`  • Tavily MCP server: ${isCodingEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Pi-dev bridge: ${isPidevEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Speech-to-Text (STT) + Voice Assistant: ${runConfig.stts ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
+Logger.info(`  • Browser control bridge: ${isBrowserEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 
 if (!isDiscordEnabled && !backend && !isVrchatEnabled && !runConfig.stts) {
     Logger.warning('No Discord, no Minecraft, no VRChat bridge, and no STTS active - there is nothing for this process to do', "STARTUP")
 }
 
+// ---------- 2. Instantiate Lily ----------
+const sttsConfig = {
+    enabled: runConfig.stts,
+    pidevEnabled: runConfig.stts && isPidevEnabled,
+}
+
+export const ai = new Lily(
+    {},                                     // options (will use config defaults)
+    null,                                   // mcSend – set later via ai.setMcSend()
+    null,                                   // vtsClient – set later via ai.setVtsClient()
+    sttsConfig,
+    null,                                   // onVoiceGif – optional, can be added later
+    {
+        modded: backend === 'modded',
+        mineflayer: backend === 'mineflayer',
+        vtube: runConfig.vtube,
+        vrchat: runConfig.vrchat,
+        stts: runConfig.stts,
+        browser: runConfig.browser,
+    }
+)
+
+// ---------- 3. Variables for services ----------
 let vtsClient = null
 let survivalLoopHandle = null
 let vrchatBotHandle = null
@@ -45,6 +70,21 @@ let ytBuffer = null
 let continueBridgeHandle = null
 let pidevBridgeHandle = null
 let tavilyServerHandle = null
+let browserBridgeHandle = null // { process, client }
+
+// ---------- 4. Service initializers ----------
+async function startBrowserBridge() {
+    if (!isBrowserEnabled) return null
+    const { startBrowserBridge } = await import('./browser/bridge.js')
+    try {
+        const handle = await startBrowserBridge()
+        if (handle?.client) ai.setBrowserClient(handle.client)
+        return handle
+    } catch (err) {
+        Logger.error(`Browser control bridge failed to start: ${err.message}`, "BROWSER")
+        return null
+    }
+}
 
 async function initializeVTS() {
     if (!vtube) return null
@@ -60,12 +100,14 @@ async function initializeVTS() {
 
         await client.connect()
         Logger.success('VTube Studio connected', "VTUBE")
+        ai.setVtsClient(client)
         return client
     } catch (err) {
         Logger.error(`VTube Studio failed: ${err.message}`, "VTUBE")
         return null
     }
 }
+
 async function initializeYoutubeChat() {
     if (!vtube) return
 
@@ -100,6 +142,7 @@ async function initializeYoutubeChat() {
         console.error('[YOUTUBE FULL ERROR]', data)
     }
 }
+
 async function startMinecraft() {
     if (backend === 'mineflayer') {
         const { startMinecraftBot } = await import('./minecraft/mineflayer/index.js')
@@ -185,9 +228,10 @@ async function startPidevBridge() {
     return start()
 }
 
+// ---------- 5. Initialize all features ----------
 async function initializeFeatures() {
     vtsClient = await initializeVTS()
-    if (vtsClient) ai.setVtsClient(vtsClient)
+    // vtsClient is already set in ai via setVtsClient inside initializeVTS
 
     await initializeYoutubeChat()
 
@@ -195,12 +239,17 @@ async function initializeFeatures() {
 
     if (mcBot && backend === 'modded') {
         const { stateController, mcSend, mcChat } = mcBot
+        if (mcSend) ai.setMcSend(mcSend)
+
         const survivalLoop = await startSurvivalLoop(mcSend, mcChat, stateController)
 
         if (survivalLoop) {
             survivalLoopHandle = survivalLoop
             Logger.success('Survival loop started', "SURVIVAL")
         }
+    } else if (mcBot && backend === 'mineflayer') {
+        // Mineflayer bot might expose mcSend – adjust as needed
+        if (mcBot.mcSend) ai.setMcSend(mcBot.mcSend)
     }
 
     vrchatBotHandle = await startVrchat()
@@ -218,12 +267,18 @@ async function initializeFeatures() {
         Logger.success('Tavily MCP server started', "TAVILY")
     }
 
+    browserBridgeHandle = await startBrowserBridge()
+    if (browserBridgeHandle) {
+        Logger.success('Browser control bridge started', "BROWSER")
+    }
+
     pidevBridgeHandle = await startPidevBridge()
     if (pidevBridgeHandle) {
         Logger.success('Pi-dev bridge started', "PIDEV")
     }
 }
 
+// ---------- 6. Discord setup ----------
 async function setupDiscordBot() {
     if (!isDiscordEnabled) {
         Logger.info("'discord' flag not set - skipping Discord login", "STARTUP")
@@ -246,12 +301,12 @@ async function setupDiscordBot() {
     return client
 }
 
+// ---------- 7. Main ----------
 async function main() {
     try {
-        // --- Start STT & voice assistant if flag is set ---
         if (runConfig.stts) {
             try {
-                await stts.start()                                  // <-- changed
+                await stts.start()
                 Logger.success('Transcription service started', 'STTS')
                 startVoiceAssistant()
                 Logger.success('Voice assistant started', 'VOICE')
@@ -286,19 +341,25 @@ async function main() {
             if (continueBridgeHandle?.close) {
                 await new Promise(resolve => continueBridgeHandle.close(resolve))
             }
-
+            if (pidevBridgeHandle?.close) {
+                await new Promise(resolve => pidevBridgeHandle.close(resolve))
+            }
             if (tavilyServerHandle?.kill) {
                 tavilyServerHandle.kill()
             }
-
+            if (browserBridgeHandle?.client) {
+                browserBridgeHandle.client.close()
+            }
+            if (browserBridgeHandle?.process?.kill) {
+                browserBridgeHandle.process.kill()
+            }
             if (pidevBridgeHandle?.close) {
                 await new Promise(resolve => pidevBridgeHandle.close(resolve))
             }
 
-            // --- Stop voice assistant and transcription ---
             if (runConfig.stts) {
                 stopVoiceAssistant()
-                stts.stop()                                          // <-- changed
+                stts.stop()
                 Logger.info('Transcription and voice assistant stopped', 'STTS')
             }
 

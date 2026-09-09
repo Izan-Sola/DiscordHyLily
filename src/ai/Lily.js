@@ -22,13 +22,13 @@ const GIF_TOOLS = new Set(["send_gif", "send_meme"])
 export class Lily {
     /**
      * @param {object} options
-     * @param {(type: string, params: object) => void} [mcSend]
+     * @param {Function} [mcSend]
      * @param {object} [vtsClient]
      * @param {object} [sttsConfig]
-     * @param {Function} [onVoiceGif] - callback (gifUrl: string) => void
-     *   called when a GIF is generated via voice assistant channel.
+     * @param {Function} [onVoiceGif]
+     * @param {object} [flags] - tool enablement flags from runConfig
      */
-    constructor(options = {}, mcSend = null, vtsClient = null, sttsConfig = {}, onVoiceGif = null) {
+    constructor(options = {}, mcSend = null, vtsClient = null, sttsConfig = {}, onVoiceGif = null, flags = {}) {
         this._optsOverride = options
         this.convoHistories = new Map()
         this.rawBuffers = new Map()
@@ -37,7 +37,19 @@ export class Lily {
         this.observeBuffers = new Map()
         this.observeParticipants = new Map()
         this.mcSend = mcSend
-        this.tools = new ToolRouter(mcSend, getStateController, vtsClient, sttsConfig)
+        this.tools = new ToolRouter({
+            mcSend,
+            getStateController,
+            vtsClient,
+            sttsConfig,
+            flags: {
+                minecraft: flags.modded || flags.mineflayer,
+                vtube: flags.vtube,
+                vrchat: flags.vrchat,
+                stts: flags.stts,
+                browser: flags.browser,
+            }
+        })
         this._resumedIds = new Map()
         this._replayCounts = new Map()
         this.turnStartMessages = new Map()
@@ -70,7 +82,9 @@ export class Lily {
         this.mcSend = mcSend
         this.tools.setMcSend(mcSend)
     }
-
+    setBrowserClient(client) {
+        this.tools.setBrowserClient(client);
+    }
     setVtsClient(vtsClient) {
         this.tools.setVtsClient(vtsClient)
     }
