@@ -3,7 +3,7 @@ import { getStateController } from '../minecraft/neoforgemod-way/bot.js'
 import { sanitizeInput, ToolCallTracker } from './utils.js'
 import { ConversationHistory, RawBuffer } from './history.js'
 import { SYSTEM_PROMPT, SUMMARIZE_PROMPT, VTUBE_EXPRESSION_ADDENDUM } from './prompts.js'
-import { ToolRouter, ALL_TOOL_NAMES } from './tools/toolRouter.js'
+import { ToolRouter, ALL_TOOL_NAMES, VOICE_ASSISTANT_CHANNEL as VOICE_ASSISTANT_CHANNEL_ID } from './tools/toolRouter.js'
 import { Logger } from '../../src/utils/Logger.js'
 import { saveFlawlessTurn } from './saveFlawlessTurns.js'
 import { getConfig } from './config.js'
@@ -36,7 +36,7 @@ export class Lily {
      *   Optional at construction time — wire it later with setVtsClient()
      *   if the VTS connection isn't ready yet when Lily is first built.
      */
-    constructor(options = {}, mcSend = null, vtsClient = null) {
+    constructor(options = {}, mcSend = null, vtsClient = null, sttsConfig = {}) {
         // this.opts is a getter (defined below) that re-reads config.json
         // fresh on every access — there's no snapshot to go stale, so
         // editing and saving the file takes effect on the very next opts
@@ -57,7 +57,7 @@ export class Lily {
         // it here. ToolRouter fans calls out to chat/minecraft/vtube by
         // tool name, letting all three mix freely within a single turn —
         // see toolRouter.js.
-        this.tools = new ToolRouter(mcSend, getStateController, vtsClient)
+        this.tools = new ToolRouter(mcSend, getStateController, vtsClient, sttsConfig)
         this._resumedIds = new Map()
         this._replayCounts = new Map()
         // channelId -> { role: "user", content } — the single user message that
@@ -142,6 +142,7 @@ export class Lily {
     getToolsForChannel(channelId) {
         if (channelId === MINECRAFT_CHANNEL_ID) return this.tools.tools
         if (channelId === VRCHAT_CHANNEL_ID) return this.tools.vrchatTools
+        if (channelId === VOICE_ASSISTANT_CHANNEL_ID) return this.tools.voiceAssistantTools
         return this.tools.nonMinecraftTools
     }
 
@@ -710,7 +711,7 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
         }
 
         toolsUsedThisTurn.set(name, usesSoFar + 1)
-        const result = await this.tools.execute(name, args)
+        const result = await this.tools.execute(name, args, { channelId })
 
         if (GIF_TOOLS.has(name)) {
             try {
@@ -725,6 +726,13 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
 
     return pendingGifUrl
 }
+    injectPendingScreenshots(channelId, scratch) {
+        if (channelId !== VOICE_ASSISTANT_CHANNEL_ID) return
+        const pending = this.tools.takePendingImages()
+        if (!pending.length) return
+        const images = pending.map(img => ({ mimeType: img.mediaType, base64: img.base64 }))
+        scratch.push({ role: "user", content: this.buildUserContent("", images) })
+    }
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
         const baseTools = this.getToolsForChannel(channelId)
@@ -786,6 +794,7 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
                     }
                 )
                 if (gif) pendingGifUrl = gif
+                this.injectPendingScreenshots(channelId, scratch) 
 
                 if (this.tools.shouldHardStop()) {
                     Logger.warning(`Tool budget/limit exhausted this turn, forcing final reply`, "HARD STOP")
@@ -810,7 +819,9 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
                         channelId, calls, tracker, toolsUsedThisTurn,
                         (_name, text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
                     )
+                    
                     if (gif) pendingGifUrl = gif
+                    this.injectPendingScreenshots(channelId, scratch) 
 
                     if (this.tools.shouldHardStop()) {
                         Logger.warning(`Tool budget/limit exhausted this turn, forcing final reply`, "HARD STOP")
@@ -947,4 +958,4 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
     }
 }
 
-export { VRCHAT_CHANNEL_ID, MINECRAFT_CHANNEL_ID }
+export { VRCHAT_CHANNEL_ID, MINECRAFT_CHANNEL_ID, VOICE_ASSISTANT_CHANNEL_ID }

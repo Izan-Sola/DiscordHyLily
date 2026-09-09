@@ -36,7 +36,12 @@ export function describeConfig(config) {
     if (config.stts) label += '-stts'   // <-- new
     return label
 }
-
+export function getSttsToolConfig(flags = parseFlags()) {
+    return {
+        enabled: flags.has('stts'),
+        pidevEnabled: flags.has('stts') && flags.has('pidev'),
+    }
+}
 export function isDiscordEnabled(flags = parseFlags()) {
     return flags.has('discord')
 }

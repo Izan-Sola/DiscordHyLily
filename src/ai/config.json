@@ -39,7 +39,7 @@
     "memoryAutoInjectEpisodicMinScore": 0.65,
 
 
-        "toolCallFormat": "xml_tags",
-        "trainingOutputFormat": "sharegpt"
+    "toolCallFormat": "xml_tags",
+    "trainingOutputFormat": "sharegpt"
 
 }

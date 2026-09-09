@@ -26,7 +26,9 @@ const __dirname = path.dirname(__filename)
 const execAsync = promisify(exec)
 import { VTSClient } from "../vtubing/VTSClient.js"
 import { isVtubeEnabled } from "../startUtils.js"
-export const ai = new Lily({ model: config.modelName })
+import { getSttsToolConfig } from '../startUtils.js' // adjust path to match your other imports there
+
+export const ai = new Lily({ model: config.modelName }, null, null, getSttsToolConfig())
 
 // ─── Voice helpers ────────────────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@
 import { stt, tts } from '../STTS/index.js';              // <-- changed
 import { SYSTEM_PROMPT } from '../ai/prompts.js';
 import { ai } from '../discord/bot.js';
+import { VOICE_ASSISTANT_CHANNEL_ID } from '../ai/Lily.js';
 
 const ASSISTANT_ENABLED = true; // or from config
 
@@ -15,8 +16,7 @@ export function startVoiceAssistant() {
    //     console.log(`[voiceAssistant] wake: ${wakeSentence}`);
         try {
             const systemPrompt = SYSTEM_PROMPT;
-            const result = await ai.chat('voiceAssistant', wakeSentence, systemPrompt, {}, []);
-            if (result && result.text) {
+            const result = await ai.chat(VOICE_ASSISTANT_CHANNEL_ID, wakeSentence, systemPrompt, {}, []);   if (result && result.text) {
                 const reply = result.text;
                 // console.log(`[voiceAssistant] reply: ${reply}`);
                 await tts.speak(reply);                    

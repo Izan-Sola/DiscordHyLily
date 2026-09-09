@@ -26,7 +26,7 @@
   "FOLLOW_TURN_SPEED": 5,
   "FOLLOW_TURN_INVERT": true,
   "TTS_ENGINE": "edge-tts",
-  "PLATFORM": "KDE",
+  "PLATFORM": "GNOME",
   "VRCHAT_USERNAME": "",
   "VRCHAT_PASSWORD": "",
   "VRCHAT_TOTP_SECRET": "",
