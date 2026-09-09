@@ -1,4 +1,4 @@
-## HOW TO USE
+## HOW TO USE - WIP
 ###### If you are interested in having your own VRChat bot or, for whatever reason you want to use this "brain" for your AI, you are free to do so, and you are gonna need to set up a bunch of stuff, plus a bunch of environment variables. I'm not gonna go too much into detail but all this should be helpful enough if you know what you are doing or at least are tech savvy. If not then well fuck around and find out, AI is free and learning is fun. Yes it is a lot of stuff to setup, welcome to local hosting or whatever. Yes some of my code might suck or be messy. Also this is a WIP, so yeah, it is not perfect. You might need to edit some of the provided python scripts, if you use them, just one or two variables.
 
 ###### Now theres also a video guide for the VRChat bot: https://www.youtube.com/watch?v=ylGpdnShBqA
