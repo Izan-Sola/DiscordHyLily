@@ -34,10 +34,20 @@ function detectDesktop() {
 
 async function waitForFile(filePath, timeoutMs = FILE_APPEAR_TIMEOUT_MS, pollMs = FILE_APPEAR_POLL_MS) {
     const deadline = Date.now() + timeoutMs
+    let lastSize = -1
+    let stableCount = 0
     while (Date.now() < deadline) {
         try {
             const s = await stat(filePath)
-            if (s.size > 0) return true
+            if (s.size > 0) {
+                if (s.size === lastSize) {
+                    stableCount++
+                    if (stableCount >= 2) return true
+                } else {
+                    stableCount = 0
+                    lastSize = s.size
+                }
+            }
         } catch {
             // not there yet, keep polling
         }

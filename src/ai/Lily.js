@@ -1,10 +1,11 @@
+// src/ai/Lily.js
 import axios from "axios"
 import { getStateController } from '../minecraft/neoforgemod-way/bot.js'
 import { sanitizeInput, ToolCallTracker } from './utils.js'
 import { ConversationHistory, RawBuffer } from './history.js'
 import { SYSTEM_PROMPT, SUMMARIZE_PROMPT, VTUBE_EXPRESSION_ADDENDUM } from './prompts.js'
 import { ToolRouter, ALL_TOOL_NAMES, VOICE_ASSISTANT_CHANNEL as VOICE_ASSISTANT_CHANNEL_ID } from './tools/toolRouter.js'
-import { Logger } from '../../src/utils/Logger.js'
+import { Logger } from '../utils/Logger.js'
 import { saveFlawlessTurn } from './saveFlawlessTurns.js'
 import { getConfig } from './config.js'
 import { speakToStream } from '../vtubing/youtube/streamTTS.js'
@@ -24,7 +25,7 @@ export class Lily {
      * @param {object} options
      * @param {Function} [mcSend]
      * @param {object} [vtsClient]
-     * @param {object} [sttsConfig]
+     * @param {object} [sttsConfig] - { enabled, pidevEnabled }
      * @param {Function} [onVoiceGif]
      * @param {object} [flags] - tool enablement flags from runConfig
      */
@@ -82,11 +83,13 @@ export class Lily {
         this.mcSend = mcSend
         this.tools.setMcSend(mcSend)
     }
-    setBrowserClient(client) {
-        this.tools.setBrowserClient(client);
-    }
+
     setVtsClient(vtsClient) {
         this.tools.setVtsClient(vtsClient)
+    }
+
+    setBrowserClient(client) {
+        this.tools.setBrowserClient(client)
     }
 
     buildSystemPrompt(extraInstructions = null) {
@@ -286,51 +289,59 @@ export class Lily {
         }
     }
 
+    // ---------- UPDATED sendToOllama with image support ----------
     async sendToOllama(messages, foreignTools = [], noTools = false, baseTools = this.tools.tools, overrides = {}) {
         if (getStateController()?.currentStateName === 'DUELING') {
             return { content: "Lily is currently in a duel, she can't reply right now!" }
         }
+
+        const payloadOptions = {
+            model: this.opts.model,
+            stream: false,
+            temperature: overrides.temperature ?? this.opts.temperature,
+            top_p: this.opts.top_p,
+            top_k: this.opts.top_k,
+            presence_penalty: overrides.presence_penalty ?? this.opts.presence_penalty,
+            min_p: this.opts.min_p,
+            repeat_penalty: overrides.repeat_penalty ?? this.opts.repeat_penalty,
+            repeat_last_n: this.opts.repeat_last_n,
+            max_tokens: overrides.max_tokens ?? this.opts.max_tokens,
+            stop: overrides.stop ?? ["</answer>", "<|user|>", "<|endoftext|>"],
+            reasoning_effort: this.opts.think === false ? "none" : (this.opts.think ?? "none"),
+            think: this.opts.think ?? false,
+        };
+
         try {
-            const payload = {
-                model: this.opts.model,
-                messages,
-                stream: false,
-                temperature: overrides.temperature ?? this.opts.temperature,
-                top_p: this.opts.top_p,
-                top_k: this.opts.top_k,
-                presence_penalty: overrides.presence_penalty ?? this.opts.presence_penalty,
-                min_p: this.opts.min_p,
-                repeat_penalty: overrides.repeat_penalty ?? this.opts.repeat_penalty,
-                repeat_last_n: this.opts.repeat_last_n,
-                max_tokens: overrides.max_tokens ?? this.opts.max_tokens,
-                stop: overrides.stop ?? ["</answer>", "<|user|>", "<|endoftext|>"],
-                reasoning_effort: this.opts.think === false ? "none" : (this.opts.think ?? "none"),
-                think: this.opts.think ?? false,
-            }
+            const payload = { ...payloadOptions, messages };
             if (!noTools) {
-                payload.tools = foreignTools.length ? [...baseTools, ...foreignTools] : baseTools
+                payload.tools = foreignTools.length ? [...baseTools, ...foreignTools] : baseTools;
             }
 
-            const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, payload, { timeout: this.opts.ollamaTimeout })
-            const msg = data.choices?.[0]?.message ?? null
-
-            if (msg && !msg.content?.trim() && (msg.reasoning_content || msg.reasoning)) {
-                Logger.warning(`content empty, model text landed in reasoning field instead — using it as fallback`, "OLLAMA FALLBACK")
-                msg.content = msg.reasoning_content ?? msg.reasoning
-            }
-
-            if (msg?.content) {
-                msg.content = msg.content
-                    .replace(/<think>[\s\S]*?<\/think>/g, "")
-                    .replace(/<\/?answer>/g, "")
-                    .trim()
-            }
-            return msg
+            const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, payload, {
+                timeout: this.opts.ollamaTimeout,
+            });
+            const msg = data.choices?.[0]?.message ?? null;
+            return this._normalizeOllamaMessage(msg);
         } catch (err) {
-            const detail = err.response?.data ? JSON.stringify(err.response.data) : ""
-            Logger.error(`${err.message} ${detail}`, "OLLAMA")
-            return null
+            const detail = err.response?.data ? JSON.stringify(err.response.data) : "";
+            Logger.error(`${err.message} ${detail}`, "OLLAMA");
+            return null;
         }
+    }
+    // Shared message normalisation
+    _normalizeOllamaMessage(msg) {
+        if (!msg) return null;
+        if (!msg.content?.trim() && (msg.reasoning_content || msg.reasoning)) {
+            Logger.warning(`content empty, model text landed in reasoning field — using it as fallback`, "OLLAMA FALLBACK");
+            msg.content = msg.reasoning_content ?? msg.reasoning;
+        }
+        if (msg?.content) {
+            msg.content = msg.content
+                .replace(/<think>[\s\S]*?<\/think>/g, "")
+                .replace(/<\/?answer>/g, "")
+                .trim();
+        }
+        return msg;
     }
 
     parseEmbeddedToolCalls(content) {
