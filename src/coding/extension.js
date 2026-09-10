@@ -17,6 +17,7 @@
 // active editor in that debug window instead of your real editing window.
 const vscode = require('vscode')
 const http = require('http')
+const pathModule = require('path')
 
 const PORT = process.env.LILY_COMPANION_PORT
     ? parseInt(process.env.LILY_COMPANION_PORT, 10)
@@ -93,7 +94,50 @@ function activate(context) {
 
                 return sendJson(res, 200, { applied: true })
             }
+            if (req.method === 'POST' && req.url === '/create-file') {
+                const raw = await readBody(req)
+                let body
+                try { body = JSON.parse(raw) } catch { return sendJson(res, 400, { error: 'invalid json' }) }
 
+                const { path: filePath, content, overwrite } = body
+                if (!filePath || typeof filePath !== 'string') {
+                    return sendJson(res, 400, { error: 'path required' })
+                }
+
+                const uri = vscode.Uri.file(filePath)
+
+                // Never clobber an existing file unless the caller explicitly opted in.
+                let alreadyExists = true
+                try {
+                    await vscode.workspace.fs.stat(uri)
+                } catch {
+                    alreadyExists = false
+                }
+                if (alreadyExists && !overwrite) {
+                    return sendJson(res, 409, { error: 'file already exists', path: filePath })
+                }
+
+                try {
+                    await vscode.workspace.fs.createDirectory(vscode.Uri.file(pathModule.dirname(filePath)))
+                } catch (e) {
+                    return sendJson(res, 500, { error: `couldn't create parent directory: ${e.message}` })
+                }
+
+                try {
+                    await vscode.workspace.fs.writeFile(uri, Buffer.from(typeof content === 'string' ? content : '', 'utf8'))
+                } catch (e) {
+                    return sendJson(res, 500, { error: `couldn't write file: ${e.message}` })
+                }
+
+                try {
+                    const doc = await vscode.workspace.openTextDocument(uri)
+                    await vscode.window.showTextDocument(doc, { preview: false })
+                } catch {
+                    // File was created even if opening it in the editor failed — non-fatal.
+                }
+
+                return sendJson(res, 200, { created: true, path: filePath, overwritten: alreadyExists })
+            }
             sendJson(res, 404, { error: 'not found' })
         } catch (err) {
             sendJson(res, 500, { error: err.message })
